@@ -1,0 +1,17 @@
+{
+  "name": "Voice Chat",
+  "description": "Voice I/O pipeline: speak into mic, get transcribed, chat responds, speaks back via TTS.",
+  "nodes": [
+    { "type": "Audio Input", "id": "mic", "x": -400, "y": -100 },
+    { "type": "Transcriber", "id": "transcriber", "x": -100, "y": -100, "w": 320 },
+    { "type": "Chat", "id": "chat", "x": -100, "y": 80, "w": 400, "model": "fennix-local" },
+    { "type": "TTS", "id": "tts", "x": 350, "y": 80, "w": 280 },
+    { "type": "Preview", "id": "preview", "x": 350, "y": 220, "w": 320 }
+  ],
+  "connections": [
+    { "node_a": "mic", "socket_a": 0, "node_b": "transcriber", "socket_b": 0 },
+    { "node_a": "transcriber", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "chat", "socket_a": 1, "node_b": "tts", "socket_b": 0 },
+    { "node_a": "chat", "socket_a": 1, "node_b": "preview", "socket_b": 0 }
+  ]
+}

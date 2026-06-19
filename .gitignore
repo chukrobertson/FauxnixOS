@@ -1,0 +1,6 @@
+*.png
+*.mp4
+*.iso
+ssh-fauxnix.ps1
+AGENTS.md
+__pycache__/

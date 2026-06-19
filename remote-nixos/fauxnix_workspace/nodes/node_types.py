@@ -1,0 +1,3342 @@
+"""Fauxnix Workspace node types — Chat, Terminal, Browser, Threads, Files, etc."""
+
+import json
+import threading
+import urllib.request
+import urllib.parse
+
+from PyQt6.QtCore import Qt, QSize, QRectF, QUrl, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QColor, QFont, QPainter, QTextCursor
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
+    QLabel, QComboBox, QLineEdit, QPlainTextEdit, QScrollArea,
+    QProgressBar, QFrame, QSizePolicy,
+)
+
+from ..canvas import (
+    BaseNodeWidget, register_node_type,
+    NODE_TITLE_BG, SocketItem,
+)
+from ..theme import (
+    ORANGE, CYAN, GREEN, RED, YELLOW, WHITE,
+    NODE_TITLE_FG, BODY_FONT, TITLE_FONT, NODE_BG, NODE_BORDER,
+)
+from ..fauxd_client import (
+    get_summary, get_telemetry, get_weather, get_thread_cards,
+    get_notes as fd_get_notes, get_files_recent,
+    get_clipboard, set_clipboard, do_action,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Chat Node — streaming Ollama with tool calling
+# ═══════════════════════════════════════════════════════════════════════
+
+OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_MODEL = "fennix-local"
+
+
+class OllamaThread(QThread):
+    chunk = pyqtSignal(str)
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+    tool_call = pyqtSignal(str, dict)
+
+    def __init__(self, prompt: str, model: str = DEFAULT_MODEL, context: list[int] | None = None,
+                 messages: list | None = None, tools: list | None = None):
+        super().__init__()
+        self._prompt = prompt
+        self._model = model
+        self._context = context
+        self._messages = messages
+        self._tools = tools
+
+    def run(self):
+        try:
+            body = {
+                "model": self._model,
+                "stream": True,
+                "options": {"num_predict": 2048},
+            }
+            if self._messages:
+                body["messages"] = self._messages
+                if self._tools:
+                    body["tools"] = self._tools
+            else:
+                body["prompt"] = self._prompt
+                if self._context:
+                    body["context"] = self._context
+            req = urllib.request.Request(
+                f"{OLLAMA_URL}/api/chat" if self._messages else f"{OLLAMA_URL}/api/generate",
+                data=json.dumps(body).encode("utf-8"),
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            full = ""
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for line in resp:
+                    try:
+                        chunk_data = json.loads(line.decode("utf-8"))
+                        msg = chunk_data.get("message", {})
+                        content = msg.get("content", "")
+                        tool_calls = msg.get("tool_calls", [])
+                        if content:
+                            full += content
+                            self.chunk.emit(content)
+                        if tool_calls:
+                            for tc in tool_calls:
+                                fn = tc.get("function", {})
+                                self.tool_call.emit(fn.get("name", ""), fn.get("arguments", {}))
+                        if chunk_data.get("done"):
+                            self.finished.emit(full)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+@register_node_type("Chat", "Talk to Fennix/Ollama with streaming — drag corner to resize")
+class ChatNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Chat", QColor("#1a1a30"), 380)
+        self._model = DEFAULT_MODEL
+        self._context: list[int] = []
+        self._history: list[str] = []
+        self._thread: OllamaThread | None = None
+        self._tool_rounds = 0
+        self._max_tool_rounds = 5
+        self._tool_map: dict = {}
+        self._pending_messages: list = []
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+
+        top = QHBoxLayout()
+        self._model_combo = QComboBox()
+        self._model_combo.addItems([DEFAULT_MODEL, "qwen3:1.7b", "qwen3:0.6b", "qwen2.5-coder:14b"])
+        self._model_combo.setCurrentText(self._model)
+        self._model_combo.currentTextChanged.connect(self._on_model_change)
+        self._model_combo.setStyleSheet(
+            "QComboBox { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 2px 6px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: #141518; color: #d4d4d4; "
+            "selection-background-color: #ff7800; }"
+        )
+        top.addWidget(self._model_combo)
+        layout.addLayout(top)
+
+        self._output = QTextEdit()
+        self._output.setReadOnly(True)
+        self._output.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 12px; }"
+        )
+        self._output.setMinimumHeight(120)
+        self._output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self._output, 1)
+
+        input_row = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Ask Fennix...")
+        self._input.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
+            "QLineEdit:focus { border-color: #ff7800; }"
+        )
+        self._input.returnPressed.connect(self._send)
+        input_row.addWidget(self._input)
+
+        send_btn = QPushButton("Send")
+        send_btn.setStyleSheet(
+            "QPushButton { background: #ff7800; color: #080909; border: none; "
+            "border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #ff9940; }"
+        )
+        send_btn.clicked.connect(self._send)
+        input_row.addWidget(send_btn)
+        layout.addLayout(input_row)
+
+        w.setMinimumHeight(180)
+        self.set_body_widget(w)
+
+    def _on_model_change(self, model: str):
+        self._model = model
+
+    def _send(self):
+        text = self._input.text().strip()
+        if not text:
+            return
+        self._input.clear()
+        self._tool_rounds = 0
+        self._history.append(f"You: {text}")
+        self._output.append(f'<b style="color:#ff7800;">You:</b> {text}')
+
+        # Discover tools and build name→node map
+        tools, self._tool_map = self._discover_tools()
+        # Gather context from wired nodes
+        ctx = self._gather_context()
+        # Retrieve relevant memories
+        mem_ctx = self._retrieve_memories(text)
+
+        parts = []
+        if mem_ctx:
+            parts.append("Relevant memories:\n" + mem_ctx)
+        if ctx:
+            parts.append("Current system context:\n" + ctx)
+
+        system_prompt = (
+            "You are Fennix, the FauxnixOS assistant. You have access to tools on the workspace canvas. "
+            "Use tools when helpful. Be concise.\n\n" + "\n\n".join(parts)
+        ) if parts else (
+            "You are Fennix, the FauxnixOS assistant. Use tools when helpful. Be concise."
+        )
+
+        self._pending_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ]
+        self._output.append(f'<i style="color:#666;">Fennix:</i> ')
+        self._run_chat(tools)
+
+    def _retrieve_memories(self, query: str) -> str:
+        """Pull relevant notes from fauxd to inject as context."""
+        try:
+            from ..fauxd_client import get_notes as fd_get_notes
+            notes = fd_get_notes()
+            if not notes:
+                return ""
+            matches = [n for n in notes if any(w in str(n.get("title","") + " " + n.get("content","")).lower() for w in query.lower().split())]
+            if not matches:
+                matches = notes[:3]
+            lines = []
+            for n in matches[:5]:
+                title = n.get("title", n.get("content", ""))[:80]
+                lines.append(f"- {title}")
+            return "\n".join(lines) if lines else ""
+        except Exception:
+            return ""
+
+    def _discover_tools(self) -> tuple[list, dict]:
+        tools = []
+        tool_map = {}
+        seen = set()
+        # Find canvas widget in parent chain
+        canvas = None
+        w = self.widget
+        while w and not canvas:
+            w = w.parentWidget()
+            if w and hasattr(w, '_state') and 'nodes' in w._state:
+                canvas = w
+        if canvas:
+            for node in canvas._state.get("nodes", []):
+                if node is self:
+                    continue
+                schema = node.tool_schema()
+                if schema:
+                    name = schema["function"]["name"]
+                    if name not in seen:
+                        seen.add(name)
+                        tools.append(schema)
+                        tool_map[name] = node
+        return tools, tool_map
+
+    def _gather_context(self) -> str:
+        parts = []
+        for data in self.input_data():
+            source = data.get("_from", "?")
+            for k, v in data.items():
+                if not k.startswith("_") and v:
+                    parts.append(f"[{source}] {k}: {v}")
+        return "; ".join(parts) if parts else ""
+
+    def _run_chat(self, tools: list):
+        self._thread = OllamaThread(
+            "", self._model,
+            messages=self._pending_messages,
+            tools=tools if tools else None,
+        )
+        self._thread.chunk.connect(self._on_chunk)
+        self._thread.finished.connect(self._on_finished)
+        self._thread.error.connect(self._on_error)
+        self._thread.tool_call.connect(self._on_tool_call)
+        self._thread.start()
+
+    def _on_tool_call(self, name: str, arguments: dict):
+        self._output.append(f'\n<span style="color:#ffb74d;">[Tool: {name}({arguments})]</span>\n')
+        node = getattr(self, "_tool_map", {}).get(name)
+        result = f"Tool '{name}' not found on canvas"
+        if node:
+            try:
+                result = node.tool_invoke(name, arguments)
+            except Exception as e:
+                result = f"Tool error: {e}"
+        # Add result to conversation and continue
+        self._pending_messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": name, "arguments": arguments}}]})
+        self._pending_messages.append({"role": "tool", "content": result[:2000]})
+        self._tool_rounds += 1
+        if self._tool_rounds < self._max_tool_rounds:
+            tools, self._tool_map = self._discover_tools()
+            self._run_chat(tools)
+        else:
+            self._output.append(f'\n<span style="color:#888;">(tool limit reached)</span>')
+
+    def _on_chunk(self, token: str):
+        cursor = self._output.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(token)
+        self._output.ensureCursorVisible()
+
+    def _on_finished(self, full: str):
+        self._history.append(f"Fennix: {full}")
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"text": full, "model": self._model})
+
+    def _on_error(self, err: str):
+        self._output.append(f'<span style="color:#ff4444;">Error: {err}</span>')
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["model"] = self._model
+        d["history"] = self._history[-10:]
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._model = data.get("model", DEFAULT_MODEL)
+        self._model_combo.setCurrentText(self._model)
+        self._history = data.get("history", [])
+        for h in self._history:
+            self._output.append(h)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Terminal Node — embedded terminal card
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Terminal", "Resizable terminal — drag corner to resize. Run shell commands.")
+class TerminalNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Terminal", QColor("#0d1a0d"), 500)
+        self._build_ui()
+        self.add_socket("in", "command")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self._output = QTextEdit()
+        self._output.setReadOnly(True)
+        self._output.setStyleSheet(
+            "QTextEdit { background: #050505; color: #00cc66; border: 1px solid #1a2a1a; "
+            "border-radius: 4px; padding: 4px; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace; "
+            "font-size: 11px; }"
+        )
+        self._output.setMinimumHeight(200)
+        self._output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self._output, 1)
+
+        input_row = QHBoxLayout()
+        self._cmd = QLineEdit()
+        self._cmd.setPlaceholderText("$ command...")
+        self._cmd.setStyleSheet(
+            "QLineEdit { background: #050505; color: #00cc66; border: 1px solid #1a2a1a; "
+            "border-radius: 4px; padding: 4px 8px; font-family: 'Cascadia Code', 'Fira Code', monospace; "
+            "font-size: 11px; }"
+            "QLineEdit:focus { border-color: #00cc66; }"
+        )
+        self._cmd.returnPressed.connect(self._run_cmd)
+        input_row.addWidget(self._cmd)
+        layout.addLayout(input_row)
+
+        self.set_body_widget(w)
+
+    def _run_cmd(self):
+        cmd = self._cmd.text().strip()
+        if not cmd:
+            return
+        self._cmd.clear()
+        self._output.append(f'<span style="color:#888;">$ {cmd}</span>')
+        try:
+            import subprocess
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30,
+                                    cwd=str(__import__("pathlib").Path.home()))
+            if result.stdout:
+                self._output.append(
+                    f'<span style="color:#00cc66;">{result.stdout.strip().replace("<", "&lt;").replace(">", "&gt;")}</span>'
+                )
+            if result.stderr:
+                self._output.append(
+                    f'<span style="color:#ff6644;">{result.stderr.strip().replace("<", "&lt;").replace(">", "&gt;")}</span>'
+                )
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"text": result.stdout, "exit_code": result.returncode})
+        except Exception as e:
+            self._output.append(f'<span style="color:#ff4444;">{e}</span>')
+
+    def tool_schema(self) -> dict | None:
+        return {
+            "type": "function",
+            "function": {
+                "name": "run_shell_command",
+                "description": "Run a shell command on the Fauxnix system and return the output",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "The shell command to execute"}
+                    },
+                    "required": ["command"]
+                }
+            }
+        }
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "run_shell_command":
+            cmd = arguments.get("command", "")
+            import subprocess
+            try:
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return result.stdout or result.stderr or "(no output)"
+            except Exception as e:
+                return str(e)
+        return f"Unknown tool: {name}"
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in" and "command" in data:
+            self._output.append(f'<span style="color:#444;">> {data["command"]}</span>')
+            self._cmd.setText(data["command"])
+            self._run_cmd()
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["output_lines"] = self._output.toPlainText().split("\n")[-20:]
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        for line in data.get("output_lines", []):
+            self._output.append(line)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Browser Node — live web view on canvas, zoom to fullscreen
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Browser", "Live Chromium/Firefox-like web view on the canvas — zoom to fullscreen")
+class BrowserNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Browser", QColor("#1a2030"), 520)
+        self._current_url = "https://lite.duckduckgo.com"
+        self._current_title = ""
+        self._fullscreen_window = None
+        self._fullscreen = False
+        self._web = None
+        self._build_ui()
+        self.add_socket("in", "url")
+        self.add_socket("out", "url")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        # Navigation bar
+        nav = QHBoxLayout()
+        back_btn = QPushButton("<")
+        back_btn.setFixedWidth(24)
+        back_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #ff7800; }"
+        )
+        back_btn.clicked.connect(lambda: self._web.back() if self._web else None)
+        nav.addWidget(back_btn)
+
+        fwd_btn = QPushButton(">")
+        fwd_btn.setFixedWidth(24)
+        fwd_btn.setStyleSheet(back_btn.styleSheet())
+        fwd_btn.clicked.connect(lambda: self._web.forward() if self._web else None)
+        nav.addWidget(fwd_btn)
+
+        self._url_bar = QLineEdit()
+        self._url_bar.setText(self._current_url)
+        self._url_bar.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #00c8ff; }"
+        )
+        self._url_bar.returnPressed.connect(self._navigate)
+        nav.addWidget(self._url_bar)
+
+        fs_btn = QPushButton("[]")
+        fs_btn.setFixedWidth(28)
+        fs_btn.setToolTip("Toggle fullscreen (F11)")
+        fs_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        fs_btn.clicked.connect(self._toggle_fullscreen)
+        nav.addWidget(fs_btn)
+        layout.addLayout(nav)
+
+        # Web view — lazy init to avoid QGraphicsScene + QWebEngineView crash on Wayland
+        self._web_placeholder = QLabel("Click Go or enter URL to open browser")
+        self._web_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._web_placeholder.setStyleSheet(
+            "color: #666; font-size: 11px; padding: 20px; border: 2px dashed #2a2d33; border-radius: 8px;"
+        )
+        self._web_placeholder.setMinimumSize(440, 200)
+        self._web_placeholder.mousePressEvent = lambda e: self._init_web()
+        layout.addWidget(self._web_placeholder)
+
+        w.setFixedHeight(40)
+        self.set_body_widget(w)
+
+        # Reposition web proxy when node moves
+        self._check_zoom_timer = QTimer()
+        self._check_zoom_timer.timeout.connect(self._check_zoom)
+        self._check_zoom_timer.start(1000)
+
+    def _init_web(self):
+        """Lazy-init the web view to avoid QGraphicsScene crash on Wayland."""
+        if self._web is not None:
+            return
+        try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            from PyQt6.QtWebEngineCore import QWebEngineSettings
+            self._web = QWebEngineView()
+            self._web.setMinimumSize(440, 280)
+            settings = self._web.settings()
+            settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+            self._web.load(QUrl(self._current_url))
+            self._web.urlChanged.connect(self._on_url_change)
+            self._web.titleChanged.connect(self._on_title_change)
+            self._web.setParent(self)
+            self._web.move(self.BODY_PAD, self.TITLE_HEIGHT + self.BODY_PAD)
+            self._web.show()
+            if self._web_placeholder:
+                self._web_placeholder.hide()
+            self._layout_web()
+        except ImportError:
+            self._web_placeholder.setText("QtWebEngine not available")
+
+    def cleanup(self):
+        self._check_zoom_timer.stop()
+        if self._fullscreen_window:
+            self._fullscreen_window.close()
+            self._fullscreen_window = None
+
+    def _layout_web(self):
+        if not self._web:
+            return
+        body_bottom = 0
+        if self._body_widget:
+            body_bottom = self._body_widget.y() + self._body_widget.height()
+        y = body_bottom + self.BODY_PAD
+        self._web.move(self.BODY_PAD, y)
+        bw = self._node_width - self.BODY_PAD * 2
+        self._web.resize(bw, max(self._web.height(), 280))
+
+    def total_height(self) -> float:
+        base = super().total_height()
+        return base + 370
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0, 0, self._node_width, self.total_height())
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"browse_web","description":"Navigate the embedded browser to a URL or search query","parameters":{"type":"object","properties":{"url":{"type":"string","description":"URL or search term to navigate to"}},"required":["url"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "browse_web":
+            self._url_bar.setText(arguments.get("url", ""))
+            self._navigate()
+            return f"Navigating to: {arguments.get("url", "")}"
+        return f"Unknown: {name}"
+
+    def _navigate(self):
+        self._init_web()
+        url = self._url_bar.text().strip()
+        if not url:
+            return
+        if not url.startswith("http"):
+            url = "https://" + url
+        self._current_url = url
+        self._url_bar.setText(url)
+        if self._web:
+            self._web.load(QUrl(url))
+
+    def _on_url_change(self, url):
+        self._current_url = url.toString()
+        self._url_bar.setText(self._current_url)
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"url": self._current_url, "title": self._current_title})
+
+    def _on_title_change(self, title):
+        self._current_title = title
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"url": self._current_url, "title": title})
+
+    def _check_zoom(self):
+        parent = self.widget.parentWidget()
+        if not parent or not hasattr(parent, '_state'):
+            return
+        scale = parent._state.get("scale", 1.0)
+        if self.isSelected() and scale > 1.8 and not self._fullscreen:
+            self._enter_fullscreen()
+        elif scale < 0.5 and self._fullscreen:
+            self._exit_fullscreen()
+
+    def _toggle_fullscreen(self):
+        if self._fullscreen:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
+
+    def _enter_fullscreen(self):
+        if not self._web or self._fullscreen:
+            return
+        self._fullscreen = True
+        self._fullscreen_window = QWidget()
+        self._fullscreen_window.setWindowTitle("Browser — F11 to exit")
+        self._fullscreen_window.setWindowFlags(Qt.WindowType.Window)
+        layout = QVBoxLayout(self._fullscreen_window)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Nav bar for fullscreen
+        nav = QHBoxLayout()
+        nav.setContentsMargins(4, 4, 4, 4)
+        url_bar = QLineEdit(self._current_url)
+        url_bar.setStyleSheet(
+            "QLineEdit { background: #141518; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 6px 12px; font-size: 13px; }"
+            "QLineEdit:focus { border-color: #00c8ff; }"
+        )
+        url_bar.returnPressed.connect(lambda: self._web.load(QUrl(url_bar.text())))
+        nav.addWidget(url_bar)
+        layout.addLayout(nav)
+
+        self._web.setParent(None)
+        layout.addWidget(self._web)
+
+        self._fullscreen_window.resize(1400, 850)
+        self._fullscreen_window.show()
+
+    def _exit_fullscreen(self):
+        if not self._fullscreen:
+            return
+        self._fullscreen = False
+        if self._fullscreen_window:
+            self._fullscreen_window.close()
+            self._fullscreen_window = None
+        if self._web:
+            self._web.setParent(self)
+            self._web.move(self.BODY_PAD, self.TITLE_HEIGHT + self.BODY_PAD)
+            self._web.show()
+            self._layout_web()
+            self._layout_web()
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in" and "url" in data:
+            self._url_bar.setText(data["url"])
+            self._navigate()
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["current_url"] = self._current_url
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._current_url = data.get("current_url", self._current_url)
+        self._url_bar.setText(self._current_url)
+        if self._web:
+            self._web.load(QUrl(self._current_url))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# App Node — launch and track any desktop application via Sway IPC
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Apps", "App launcher — scan desktop files, launch with one click. Wired for continuity.")
+class AppNode(BaseNodeWidget):
+    def __init__(self, app_name: str = "firefox", app_label: str = "Firefox"):
+        super().__init__("Apps", QColor("#1a2030"), 320)
+        self._apps: list[dict] = []
+        self._build_ui()
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self._grid = QWidget()
+        self._grid_layout = QVBoxLayout(self._grid)
+        self._grid_layout.setContentsMargins(0, 0, 0, 0)
+        self._grid_layout.setSpacing(2)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self._grid)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setMaximumHeight(220)
+        layout.addWidget(scroll)
+
+        refresh_btn = QPushButton("Scan Apps")
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        refresh_btn.clicked.connect(self._scan)
+        layout.addWidget(refresh_btn)
+
+        w.setFixedHeight(260)
+        self.set_body_widget(w)
+        QTimer.singleShot(200, self._scan)
+
+    def _scan(self):
+        import os, configparser, glob
+        self._apps = []
+        seen = set()
+        for d in ["/run/current-system/sw/share/applications",
+                   os.path.expanduser("~/.local/share/applications"),
+                   "/etc/profiles/per-user/chvk/share/applications"]:
+            for f in sorted(glob.glob(f"{d}/*.desktop")):
+                try:
+                    cfg = configparser.ConfigParser(interpolation=None)
+                    cfg.read_string("[D]\n" + open(f).read())
+                    sec = cfg["D"]
+                    name = sec.get("Name", os.path.basename(f).replace(".desktop", ""))
+                    exe = sec.get("Exec", "").split(" ")[0]
+                    icon = sec.get("Icon", "")
+                    nodisplay = sec.get("NoDisplay", "false").lower() == "true"
+                    if nodisplay or not exe or name in seen:
+                        continue
+                    seen.add(name)
+                    self._apps.append({"name": name, "exec": exe, "icon": icon, "desktop": f})
+                except Exception:
+                    pass
+
+        # Clear grid
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add app buttons
+        for app in sorted(self._apps, key=lambda a: a["name"].lower()):
+            btn = QPushButton(f"  {app['name']}")
+            btn.setStyleSheet(
+                "QPushButton { background: #141518; color: #888; border: 1px solid #1e1e24; "
+                "border-radius: 4px; padding: 4px 10px; font-size: 10px; text-align: left; }"
+                "QPushButton:hover { color: #ff7800; border-color: #ff7800; background: #1a1a20; }"
+            )
+            btn.clicked.connect(lambda checked, a=app: self._launch(a))
+            self._grid_layout.addWidget(btn)
+        self._grid_layout.addStretch()
+
+    def _launch(self, app: dict):
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["swaymsg", "exec", app["exec"]],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"app": app["name"], "exec": app["exec"], "type": "app", "action": "launched"})
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"launch_app","description":"Launch a desktop application by name","parameters":{"type":"object","properties":{"app":{"type":"string","description":"App name as shown on the Apps card"}},"required":["app"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "launch_app":
+            target = arguments.get("app", "").lower()
+            for a in self._apps:
+                if target in a["name"].lower():
+                    self._launch(a)
+                    return f"Launched: {a['name']}"
+            return f"App not found: {target}"
+        return f"Unknown: {name}"
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {a["name"]: a["exec"] for a in self._apps[:10]}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["apps"] = self._apps[:20]
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._apps = data.get("apps", [])
+        if self._apps:
+            self._scan()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Thread Node — thread activity card
+# ═══════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════
+# Files Node — Archivist file evidence card
+# ═══════════════════════════════════════════════════════════════════════
+# Files Node — Archivist file evidence card
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Files", "File evidence from fauxd watched roots — recent, search, preview")
+class FilesNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Files", QColor("#101a20"), 300)
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "file")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._list = QTextEdit()
+        self._list.setReadOnly(True)
+        self._list.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 11px; }"
+        )
+        self._list.setMinimumHeight(100)
+        layout.addWidget(self._list)
+
+        btn_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 11px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        refresh_btn.clicked.connect(self._refresh)
+        btn_row.addWidget(refresh_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(160)
+        self.set_body_widget(w)
+
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._refresh)
+        self._poller.start(15000)
+        QTimer.singleShot(2000, self._refresh)
+
+    def cleanup(self):
+        self._poller.stop()
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            from ..fauxd_client import search_files
+            q = data.get("text", data.get("query", ""))
+            if q:
+                result = search_files(q)
+                if result:
+                    self._list.clear()
+                    for f in result[:10]:
+                        name = f.get("name", f.get("path", "?"))
+                        self._list.append(f"\u2022 {name}")
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"search_files","description":"Search indexed files on the system","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search query for filenames"}},"required":["query"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "search_files":
+            from ..fauxd_client import search_files
+            r = search_files(arguments.get("query", ""))
+            if r:
+                return "\n".join([f.get("name",f.get("path","?")) for f in r[:10]])
+            return "No files found"
+        return f"Unknown: {name}"
+
+    def _refresh(self):
+        if not self.widget.parentWidget():
+            return
+        try:
+            result = get_files_recent(12)
+            self._list.clear()
+            if result:
+                for f in result:
+                    name = f.get("name", f.get("path", "?"))
+                    src = f.get("source", "?")
+                    icon = {"high": "⬤", "medium": "◉", "candidate": "○"}.get(
+                        f.get("confidence", ""), "·"
+                    )
+                    self._list.append(f'{icon} <span style="color:#888;">[{src}]</span> {name}')
+            else:
+                self._list.append('<span style="color:#666;">fauxd not reachable</span>')
+        except Exception:
+            self._list.clear()
+            self._list.append('<span style="color:#666;">fauxd offline</span>')
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["recent"] = self._list.toPlainText().split("\n")[-15:]
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        for line in data.get("recent", []):
+            self._list.append(line)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Telemetry Node — CPU / RAM / battery / audio gauges
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Telemetry", "System telemetry gauges — CPU, RAM, battery, audio, network")
+class TelemetryNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Telemetry", QColor("#201010"), 280)
+        self._build_ui()
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+
+        self._cpu_bar = QProgressBar()
+        self._cpu_bar.setStyleSheet(
+            "QProgressBar { background: #0d0e12; border: 1px solid #1e1e24; border-radius: 3px; "
+            "height: 14px; text-align: center; font-size: 9px; color: #d4d4d4; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, "
+            "stop:0 #ff7800, stop:1 #ff9940); border-radius: 2px; }"
+        )
+        layout.addWidget(QLabel("CPU"))
+        layout.addWidget(self._cpu_bar)
+
+        self._ram_bar = QProgressBar()
+        self._ram_bar.setStyleSheet(
+            "QProgressBar { background: #0d0e12; border: 1px solid #1e1e24; border-radius: 3px; "
+            "height: 14px; text-align: center; font-size: 9px; color: #d4d4d4; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, "
+            "stop:0 #00c8ff, stop:1 #33d4ff); border-radius: 2px; }"
+        )
+        layout.addWidget(QLabel("RAM"))
+        layout.addWidget(self._ram_bar)
+
+        self._battery_label = QLabel("BAT: —")
+        self._battery_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._battery_label)
+
+        self._net_label = QLabel("NET: —")
+        self._net_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._net_label)
+
+        self._audio_label = QLabel("AUD: —")
+        self._audio_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._audio_label)
+
+        w.setFixedHeight(160)
+        self.set_body_widget(w)
+
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._poll)
+        self._poller.start(3000)
+        QTimer.singleShot(100, self._poll)
+
+    def _poll(self):
+        result = get_telemetry()
+        if not result:
+            return
+        data = result.get("telemetry", result)
+        cpu_pct = data.get("cpu_percent", 0)
+        ram_pct = data.get("memory_percent", 0)
+        bat = data.get("battery_percent", None)
+        bat_text = data.get("battery_text", "")
+        net_text = data.get("network_text", "")
+        audio_pct = data.get("audio_percent", None)
+        audio_text = data.get("audio_text", "")
+
+        self._cpu_bar.setValue(int(cpu_pct))
+        self._ram_bar.setValue(int(ram_pct))
+
+        if bat is not None:
+            self._battery_label.setText(f"BAT: {bat}% {bat_text}")
+        self._net_label.setText(f"NET: {net_text}")
+        if audio_pct is not None:
+            self._audio_label.setText(f"AUD: {audio_pct}% {audio_text}")
+
+    def serialize(self) -> dict:
+        return super().serialize()
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        QTimer.singleShot(500, self._poll)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Weather Node — weather card
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Weather", "Local weather from fauxd / wttr.in")
+class WeatherNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Weather", QColor("#1a201a"), 200)
+        self._build_ui()
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+
+        self._label = QLabel("Loading...")
+        self._label.setStyleSheet(f"color: {WHITE.name()}; font-size: 12px;")
+        self._label.setWordWrap(True)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._label)
+
+        w.setFixedHeight(50)
+        self.set_body_widget(w)
+
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._poll)
+        self._poller.start(600000)
+        QTimer.singleShot(100, self._poll)
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"get_weather","description":"Get current weather for the configured location","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "get_weather":
+            self._poll()
+            return self._label.text()
+        return f"Unknown: {name}"
+
+    def _poll(self):
+        result = get_weather()
+        if result:
+            temp = result.get("temperature", result.get("temp", "?"))
+            cond = result.get("condition", result.get("weather", "?"))
+            loc = result.get("location", "")
+            self._label.setText(f"{loc}  {temp}  {cond}")
+        else:
+            self._label.setText("Weather unavailable")
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["last_weather"] = self._label.text()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._label.setText(data.get("last_weather", "Loading..."))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Notes Node — notes and clipboard card
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Notes", "Notes and clipboard — capture ideas and clipboard content")
+class NotesNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Notes", QColor("#201a10"), 300)
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._notes_list = QTextEdit()
+        self._notes_list.setReadOnly(True)
+        self._notes_list.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 11px; }"
+        )
+        self._notes_list.setMinimumHeight(80)
+        layout.addWidget(self._notes_list)
+
+        self._input = QPlainTextEdit()
+        self._input.setPlaceholderText("Type a note...")
+        self._input.setStyleSheet(
+            "QPlainTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px; font-size: 11px; }"
+            "QPlainTextEdit:focus { border-color: #ff7800; }"
+        )
+        self._input.setMaximumHeight(50)
+        layout.addWidget(self._input)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.setStyleSheet(
+            "QPushButton { background: #ff7800; color: #080909; border: none; "
+            "border-radius: 4px; padding: 3px 12px; font-size: 11px; }"
+            "QPushButton:hover { background: #ff9940; }"
+        )
+        save_btn.clicked.connect(self._save_note)
+        btn_row.addWidget(save_btn)
+
+        clip_btn = QPushButton("Clip")
+        clip_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 3px 12px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #ff7800; }"
+        )
+        clip_btn.clicked.connect(self._paste_clipboard)
+        btn_row.addWidget(clip_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(180)
+        self.set_body_widget(w)
+
+        QTimer.singleShot(100, self._refresh_notes)
+
+    def _save_note(self):
+        text = self._input.toPlainText().strip()
+        if not text:
+            return
+        self._input.clear()
+        title = text[:40] + ("..." if len(text) > 40 else "")
+        from ..fauxd_client import create_note
+        result = create_note(title, text)
+        if result:
+            self._refresh_notes()
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"text": text, "type": "note"})
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            text = data.get("text", data.get("content", ""))
+            if text:
+                from ..fauxd_client import create_note
+                title = text[:40] + ("..." if len(text) > 40 else "")
+                create_note(title, text)
+                QTimer.singleShot(500, self._refresh_notes)
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"create_note","description":"Create a new note in the system","parameters":{"type":"object","properties":{"content":{"type":"string","description":"The note content"}},"required":["content"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "create_note":
+            content_text = arguments.get("content", "")
+            from ..fauxd_client import create_note
+            title = content_text[:40] + ("..." if len(content_text) > 40 else "")
+            create_note(title, content_text)
+            return f"Note saved: {title}"
+        return f"Unknown: {name}"
+
+    def _paste_clipboard(self):
+        result = get_clipboard()
+        self._notes_list.clear()
+        self._notes_list.append('<b>Clipboard:</b>')
+        if result:
+            for item in result[:10]:
+                clip_text = item.get("text", item.get("content", ""))[:100]
+                ts = item.get("timestamp", item.get("ts", ""))
+                self._notes_list.append(f'<span style="color:#888;">[{ts}]</span> {clip_text}')
+        self._notes_list.append(f'<hr><span style="color:#666;">Use Notes: Save above</span>')
+
+    def _refresh_notes(self):
+        result = fd_get_notes()
+        self._notes_list.clear()
+        self._notes_list.append('<b>Recent notes:</b>')
+        if result:
+            for n in result[:8]:
+                title = n.get("title", n.get("content", ""))[:60]
+                status = n.get("status", n.get("kind", ""))
+                self._notes_list.append(f'· [{status}] {title}')
+        else:
+            self._notes_list.append('<span style="color:#666;">No notes</span>')
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["notes_html"] = self._notes_list.toHtml()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        if "notes_html" in data:
+            self._notes_list.setHtml(data["notes_html"])
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Clock Node — time / date
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Clock", "Live clock with date — minimal card")
+class ClockNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Clock", QColor("#18181e"), 200)
+        self._build_ui()
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(1)
+
+        self._time_label = QLabel("00:00:00")
+        self._time_label.setStyleSheet(f"color: {WHITE.name()}; font-size: 22px; font-weight: bold;")
+        self._time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._time_label)
+
+        self._date_label = QLabel("Monday, Jan 1")
+        self._date_label.setStyleSheet("color: #888; font-size: 10px;")
+        self._date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._date_label)
+
+        w.setFixedHeight(60)
+        self.set_body_widget(w)
+
+        self._ticker = QTimer()
+        self._ticker.timeout.connect(self._tick)
+        self._ticker.start(1000)
+        self._tick()
+
+    def cleanup(self):
+        self._ticker.stop()
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"get_current_time","description":"Get the current date and time","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "get_current_time":
+            self._tick()
+            return f"{self._date_label.text()} {self._time_label.text()}"
+        return f"Unknown: {name}"
+
+    def _tick(self):
+        from datetime import datetime
+        now = datetime.now()
+        self._time_label.setText(now.strftime("%H:%M:%S"))
+        self._date_label.setText(now.strftime("%A, %b %d"))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Text Note Node — simple editable text scratchpad
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Text Note", "Editable markdown/text scratchpad — feeds content to connected nodes")
+class TextNoteNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Text Note", QColor("#1a1a20"), 300)
+        self._build_ui()
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self._editor = QPlainTextEdit()
+        self._editor.setPlaceholderText("Write here...")
+        self._editor.setStyleSheet(
+            "QPlainTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 6px; font-size: 12px; }"
+            "QPlainTextEdit:focus { border-color: #b366ff; }"
+        )
+        self._editor.setMinimumHeight(80)
+        self._editor.textChanged.connect(self._on_text_change)
+        layout.addWidget(self._editor)
+
+        w.setFixedHeight(120)
+        self.set_body_widget(w)
+
+    def _on_text_change(self):
+        text = self._editor.toPlainText()
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"text": text, "type": "note"})
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"text": self._editor.toPlainText(), "type": "note"}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["content"] = self._editor.toPlainText()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._editor.setPlainText(data.get("content", ""))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# System Settings Node — display, audio, power, network controls
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Settings", "System settings — display, audio, power, network. Wire to Chat for AI control.")
+class SettingsNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Settings", QColor("#281a10"), 320)
+        self._settings_state: dict = {}
+        self._build_ui()
+        self.add_socket("in", "command")
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(1)
+
+        # Sections using QTextEdit for display
+        self._display = QTextEdit()
+        self._display.setReadOnly(True)
+        self._display.setMaximumHeight(130)
+        self._display.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 10px; }"
+        )
+        layout.addWidget(self._display)
+
+        # Controls row
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(3)
+
+        bright_down = self._btn("-", "#ff7800")
+        bright_down.clicked.connect(lambda: self._brightness(-10))
+        ctrl.addWidget(bright_down)
+
+        bright_label = QLabel("Bri")
+        bright_label.setStyleSheet("color: #888; font-size: 9px;")
+        ctrl.addWidget(bright_label)
+
+        bright_up = self._btn("+", "#ff7800")
+        bright_up.clicked.connect(lambda: self._brightness(10))
+        ctrl.addWidget(bright_up)
+
+        ctrl.addSpacing(8)
+
+        vol_down = self._btn("-", "#00c8ff")
+        vol_down.clicked.connect(lambda: self._volume(-5))
+        ctrl.addWidget(vol_down)
+
+        vol_label = QLabel("Vol")
+        vol_label.setStyleSheet("color: #888; font-size: 9px;")
+        ctrl.addWidget(vol_label)
+
+        vol_up = self._btn("+", "#00c8ff")
+        vol_up.clicked.connect(lambda: self._volume(5))
+        ctrl.addWidget(vol_up)
+
+        ctrl.addSpacing(8)
+
+        dim_btn = self._btn("Dim", "#cc6600")
+        dim_btn.clicked.connect(self._toggle_dim)
+        ctrl.addWidget(dim_btn)
+
+        lock_btn = self._btn("Lock", "#444")
+        lock_btn.clicked.connect(self._lock)
+        ctrl.addWidget(lock_btn)
+
+        ctrl.addStretch()
+        layout.addLayout(ctrl)
+
+        w.setFixedHeight(170)
+        self.set_body_widget(w)
+
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._poll)
+        self._poller.start(5000)
+        QTimer.singleShot(200, self._poll)
+
+    def cleanup(self):
+        self._poller.stop()
+
+    def _btn(self, text: str, color: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setFixedHeight(22)
+        btn.setStyleSheet(
+            f"QPushButton {{ background: #1c1e23; color: {color}; border: 1px solid #2a2d33; "
+            f"border-radius: 3px; padding: 1px 8px; font-size: 10px; }}"
+            f"QPushButton:hover {{ border-color: {color}; }}"
+        )
+        return btn
+
+    def _poll(self):
+        import subprocess
+        state = {}
+
+        # Display
+        try:
+            r = subprocess.run(["fauxnix-display"], capture_output=True, text=True, timeout=5)
+            for line in r.stdout.strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    state[f"display_{k}"] = v
+        except Exception:
+            pass
+        try:
+            r = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=5)
+            if r.stdout:
+                parts = r.stdout.strip().split(",")
+                if len(parts) >= 4:
+                    state["brightness_pct"] = parts[3].replace("%", "").strip()
+        except Exception:
+            pass
+
+        # Audio
+        try:
+            r = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=5)
+            sink = r.stdout.strip()
+            r2 = subprocess.run(["pactl", "get-sink-volume", sink], capture_output=True, text=True, timeout=5)
+            for line in r2.stdout.strip().split("\n"):
+                if "/" in line and "%" in line:
+                    parts = line.split("/")
+                    if len(parts) >= 2:
+                        state["audio_volume"] = parts[1].strip().replace("%", "")
+            r3 = subprocess.run(["pactl", "get-sink-mute", sink], capture_output=True, text=True, timeout=5)
+            state["audio_muted"] = "yes" if "Mute: yes" in r3.stdout else "no"
+        except Exception:
+            pass
+
+        # Power
+        try:
+            r = subprocess.run(["fauxnix-power"], capture_output=True, text=True, timeout=5)
+            for line in r.stdout.strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    state[f"power_{k}"] = v
+        except Exception:
+            pass
+
+        # Weather
+        try:
+            w = get_weather()
+            if w:
+                state["weather_temperature"] = w.get("temperature", "")
+                state["weather_condition"] = w.get("condition", "")
+                state["weather_location"] = w.get("location", "")
+        except Exception:
+            pass
+
+        self._settings_state = state
+        self._update_display()
+
+    def _update_display(self):
+        s = self._settings_state
+        lines = []
+
+        disp = f'Display: {s.get("display_current", "?")}'
+        bri = s.get("brightness_pct", "?")
+        lines.append(f'<b style="color:#ff7800;">Display</b>  {disp}  brightness={bri}%')
+
+        vol = s.get("audio_volume", "?")
+        mute = " [MUTED]" if s.get("audio_muted") == "yes" else ""
+        lines.append(f'<b style="color:#00c8ff;">Audio</b>  volume={vol}{mute}')
+
+        timeout = s.get("power_timeout_seconds", "?")
+        dim = s.get("power_dim_percent", "?")
+        paused = s.get("power_paused", "no")
+        lines.append(f'<b style="color:#cc6600;">Power</b>  timeout={timeout}s  dim={dim}%  paused={paused}')
+
+        temp = s.get("weather_temperature", "?")
+        cond = s.get("weather_condition", "?")
+        loc = s.get("weather_location", "?")
+        lines.append(f'<b style="color:#888;">Weather</b>  {temp} {cond} @ {loc}')
+
+        self._display.setHtml("<br>".join(lines))
+
+        for socket in self._sockets:
+            if socket.label == "out":
+                socket.push_data(s.copy() if s else {})
+
+    def _brightness(self, delta: int):
+        import subprocess
+        try:
+            subprocess.run(
+                ["brightnessctl", "set", f"{delta}%"],
+                capture_output=True, timeout=5,
+            )
+            QTimer.singleShot(500, self._poll)
+        except Exception:
+            pass
+
+    def _volume(self, delta: int):
+        import subprocess
+        try:
+            subprocess.run(
+                ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{delta:+d}%"],
+                capture_output=True, timeout=5,
+            )
+            QTimer.singleShot(500, self._poll)
+        except Exception:
+            pass
+
+    def _toggle_dim(self):
+        import subprocess
+        try:
+            r = subprocess.run(["fauxnix-power"], capture_output=True, text=True, timeout=5)
+            paused = "no"
+            for line in r.stdout.strip().split("\n"):
+                if line.startswith("paused="):
+                    paused = line.split("=", 1)[1]
+            action = "resume" if paused == "yes" else "pause"
+            subprocess.run(["fauxnix-power", action], capture_output=True, timeout=5)
+            QTimer.singleShot(500, self._poll)
+        except Exception:
+            pass
+
+    def _lock(self):
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["swaylock", "-c", "000000"],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    def on_data_received(self, socket: SocketItem, data):
+        """Handle commands from Chat/routing nodes via input socket."""
+        if socket.label != "in":
+            return
+        action = data.get("action", "")
+        value = data.get("value", None)
+        import subprocess
+        try:
+            if action == "set_brightness" and value is not None:
+                subprocess.run(["brightnessctl", "set", f"{value}%"], capture_output=True, timeout=5)
+            elif action == "set_volume" and value is not None:
+                subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{value}%"], capture_output=True, timeout=5)
+            elif action == "mute":
+                subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"], capture_output=True, timeout=5)
+            elif action == "dim_pause":
+                subprocess.run(["fauxnix-power", "pause"], capture_output=True, timeout=5)
+            elif action == "dim_resume":
+                subprocess.run(["fauxnix-power", "resume"], capture_output=True, timeout=5)
+            elif action == "lock":
+                subprocess.Popen(["swaylock", "-c", "000000"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif action == "set_display_mode" and value:
+                subprocess.run(["fauxnix-display", "set", str(value)], capture_output=True, timeout=5)
+            elif action == "set_weather_location" and value:
+                subprocess.run(["fauxnix-settings", "weather", str(value)], capture_output=True, timeout=5)
+            QTimer.singleShot(500, self._poll)
+        except Exception:
+            pass
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return self._settings_state.copy()
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["settings_state"] = self._settings_state
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._settings_state = data.get("settings_state", {})
+        self._update_display()
+
+    def tool_schema(self) -> dict | None:
+        return {
+            "type": "function",
+            "function": {
+                "name": "control_system",
+                "description": "Control system settings: brightness, volume, display mode, dimming, or lock screen",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["set_brightness", "set_volume", "mute", "dim_pause", "dim_resume", "lock", "set_weather_location"], "description": "The action to perform"},
+                        "value": {"type": "string", "description": "Value for the action (e.g. 50 for brightness %, 45239 for weather location)"}
+                    },
+                    "required": ["action"]
+                }
+            }
+        }
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "control_system":
+            self.on_data_received(self._sockets[0] if self._sockets else None, arguments)
+            return f"Action '{arguments.get('action')}' executed with value {arguments.get('value', 'N/A')}"
+        return f"Unknown: {name}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Router Node — classify data by type, route to matching output socket
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Router", "Classify incoming data and route to matching typed output socket")
+class RouterNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Router", QColor("#20201a"), 220)
+        self._route_map: dict[str, SocketItem] = {}
+        self._build_ui()
+        self.add_socket("in", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+        self._label = QLabel("Routes: none")
+        self._label.setStyleSheet("color: #888; font-size: 10px;")
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+        w.setFixedHeight(35)
+        self.set_body_widget(w)
+
+        # Auto-create output sockets for all known types
+        for dtype in ["text", "file", "image", "audio", "url", "event", "command", "data"]:
+            sock = self.add_socket(dtype, dtype)
+            self._route_map[dtype] = sock
+        self._update_label()
+
+    def _update_label(self):
+        self._label.setText(f"Routes: text file image audio url event cmd data")
+
+    def _classify(self, data: dict) -> str:
+        """Inspect payload content and return the best-matching type."""
+        # Check explicit type field first
+        explicit = data.get("type", "")
+        if explicit in self._route_map:
+            return explicit
+
+        # Check for file paths with extensions
+        for key in ("file", "path", "files"):
+            val = data.get(key, "")
+            if isinstance(val, list):
+                val = val[0] if val else ""
+            if val:
+                ext = str(val).lower().rsplit(".", 1)[-1] if "." in str(val) else ""
+                if ext in ("jpg", "jpeg", "png", "gif", "bmp", "webp", "svg"):
+                    return "image"
+                if ext in ("mp3", "wav", "ogg", "flac", "aac", "m4a"):
+                    return "audio"
+                if ext in ("mp4", "mkv", "avi", "mov", "webm"):
+                    return "file"
+                return "file"
+
+        # Check for text content
+        if any(k in data for k in ("text", "content", "note", "prompt", "query", "response")):
+            return "text"
+
+        # Check for URL
+        if any(k in data for k in ("url", "link", "href")):
+            return "url"
+
+        # Check for event
+        if any(k in data for k in ("event", "action")):
+            return "event"
+
+        # Check for command
+        if any(k in data for k in ("command", "cmd", "shell")):
+            return "command"
+
+        return "data"
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label != "in":
+            return
+        dtype = self._classify(data)
+        if dtype in self._route_map:
+            self._route_map[dtype].push_data(data)
+        else:
+            self._route_map["data"].push_data(data)
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["route_count"] = len(self._sockets) - 1
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        for _ in range(data.get("route_count", 0)):
+            self._add_route()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Web Search Node — DuckDuckGo search, feeds results to Chat
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Web Search", "Search the web via DuckDuckGo and feed results to connected nodes")
+class WebSearchNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Web Search", QColor("#1a2025"), 280)
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Search query...")
+        self._input.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #ce93d8; }"
+        )
+        self._input.returnPressed.connect(self._search)
+        layout.addWidget(self._input)
+
+        self._results = QTextEdit()
+        self._results.setReadOnly(True)
+        self._results.setMaximumHeight(100)
+        self._results.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 10px; }"
+        )
+        layout.addWidget(self._results)
+
+        w.setFixedHeight(140)
+        self.set_body_widget(w)
+
+    def _search(self):
+        query = self._input.text().strip()
+        if not query:
+            return
+        self._results.clear()
+        self._results.append(f'<i>Searching: {query}...</i>')
+        try:
+            import urllib.request, urllib.parse, json
+            url = f"https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "fauxnix/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+                # Extract result snippets
+                import re
+                results = re.findall(r'<a[^>]*class="[^"]*result-link[^"]*"[^>]*>(.*?)</a>', html, re.DOTALL)
+                snippets = re.findall(r'<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>(.*?)</td>', html, re.DOTALL)
+                self._results.clear()
+                for i, (r, s) in enumerate(zip(results[:5], snippets[:5])):
+                    title = re.sub(r'<[^>]+>', '', r).strip()
+                    snippet = re.sub(r'<[^>]+>', '', s).strip()
+                    self._results.append(f'<b>{i+1}. {title}</b><br>{snippet[:200]}<br>')
+                for sock in self._sockets:
+                    if sock.label == "out":
+                        sock.push_data({"query": query, "results": [{"title": re.sub(r'<[^>]+>', '', r).strip(), "snippet": re.sub(r'<[^>]+>', '', s).strip()} for r, s in zip(results[:5], snippets[:5])], "type": "search"})
+        except Exception as e:
+            self._results.append(f'<span style="color:#ff4444;">Error: {e}</span>')
+
+    def tool_schema(self) -> dict | None:
+        return {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web using DuckDuckGo and return results",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "The search query"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        }
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "web_search":
+            self._input.setText(arguments.get("query", ""))
+            self._search()
+            return self._results.toPlainText()[:1000]
+        return f"Unknown: {name}"
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            query = data.get("text", data.get("query", ""))
+            if query:
+                self._input.setText(query)
+                self._search()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Memory Node — search persistent memories from past conversations
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Memory", "Search persistent memories from all conversations")
+class MemoryNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Memory", QColor("#1a1020"), 280)
+        self._build_ui()
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Search memories...")
+        self._input.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #b366ff; }"
+        )
+        self._input.returnPressed.connect(self._search)
+        layout.addWidget(self._input)
+
+        self._results = QTextEdit()
+        self._results.setReadOnly(True)
+        self._results.setMinimumHeight(60)
+        self._results.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 10px; }"
+        )
+        layout.addWidget(self._results)
+
+        w.setFixedHeight(120)
+        self.set_body_widget(w)
+        QTimer.singleShot(200, self._search)
+
+    def _search(self):
+        query = self._input.text().strip()
+        self._results.clear()
+        try:
+            notes = fd_get_notes()
+            if notes:
+                matches = notes if not query else [n for n in notes if query.lower() in str(n.get("title", "") + " " + n.get("content", "")).lower()]
+                for n in matches[:5]:
+                    title = n.get("title", n.get("content", ""))[:60]
+                    self._results.append(f'<span style="color:#b366ff;">·</span> {title}')
+                if not matches:
+                    self._results.append('<span style="color:#666;">No memories found</span>')
+                for sock in self._sockets:
+                    if sock.label == "out":
+                        sock.push_data({"memories": [n.get("title", n.get("content", "")) for n in matches[:5]], "count": len(matches), "type": "memory"})
+            else:
+                self._results.append('<span style="color:#666;">fauxd offline</span>')
+        except Exception:
+            self._results.append(f'<span style="color:#666;">fauxd offline</span>')
+
+    def tool_schema(self) -> dict | None:
+        return {
+            "type": "function",
+            "function": {
+                "name": "search_memories",
+                "description": "Search persistent memories and notes from past conversations",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search terms to find relevant memories"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        }
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "search_memories":
+            self._input.setText(arguments.get("query", ""))
+            self._search()
+            return self._results.toPlainText()[:1000]
+        return f"Unknown: {name}"
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"type": "memory", "ready": True}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Preview Node — display text/images from connected nodes
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Preview", "Display text, images, or file content from connected nodes")
+class PreviewNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Preview", QColor("#181818"), 320)
+        self._build_ui()
+        self.add_socket("in", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+        self._content = QTextEdit()
+        self._content.setReadOnly(True)
+        self._content.setMinimumHeight(80)
+        self._content.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 6px; font-size: 12px; }"
+        )
+        layout.addWidget(self._content)
+        w.setFixedHeight(120)
+        self.set_body_widget(w)
+
+    def on_data_received(self, socket: SocketItem, data):
+        text = data.get("text", data.get("content", str(data)))
+        source = data.get("_from", "")
+        self._content.clear()
+        if source:
+            self._content.append(f'<span style="color:#666;">From: {source}</span>')
+        self._content.append(text[:2000])
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"preview_content","description":"Display text content for preview","parameters":{"type":"object","properties":{"text":{"type":"string","description":"Content to display"}},"required":["text"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "preview_content":
+            self._content.setPlainText(arguments.get("text", ""))
+            return "Content displayed"
+        return f"Unknown: {name}"
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["content"] = self._content.toPlainText()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        c = data.get("content", "")
+        if c:
+            self._content.setPlainText(c)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Drag & Drop Node — accept files dropped from file manager
+# ═══════════════════════════════════════════════════════════════════════
+
+class _DropWidget(QWidget):
+    """Custom widget that accepts file drops."""
+    file_dropped = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            self.file_dropped.emit(paths)
+            event.acceptProposedAction()
+
+
+@register_node_type("Drag & Drop", "Accept files dropped from file manager — outputs file paths")
+class DragDropNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Drag & Drop", QColor("#102020"), 260)
+        self._files: list[str] = []
+        self._build_ui()
+        self.add_socket("out", "file")
+
+    def _build_ui(self):
+        self._drop_widget = _DropWidget()
+        layout = QVBoxLayout(self._drop_widget)
+        layout.setContentsMargins(6, 4, 6, 4)
+        self._label = QLabel("Drop files here")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("color: #666; font-size: 12px; padding: 16px; border: 2px dashed #2a2d33; border-radius: 8px;")
+        self._label.setMinimumHeight(50)
+        layout.addWidget(self._label)
+        self._drop_widget.setFixedHeight(70)
+        self._drop_widget.file_dropped.connect(self._on_drop)
+        self.set_body_widget(self._drop_widget)
+
+    def _on_drop(self, paths: list[str]):
+        self._files = paths
+        self._label.setText("\n".join([p.split("/")[-1][:30] for p in paths[:5]]))
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"files": paths, "type": "file"})
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"files": self._files, "type": "file"}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["files"] = self._files
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._files = data.get("files", [])
+        if self._files:
+            self._label.setText("\n".join([p.split("/")[-1][:30] for p in self._files[:5]]))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Process Node — track running desktop processes and foreground window
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Process", "Track running desktop processes and foreground window via Sway IPC")
+class ProcessNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Process", QColor("#101a10"), 260)
+        self._build_ui()
+        self.add_socket("in", "command")
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+        self._label = QLabel("Tracking...")
+        self._label.setStyleSheet("color: #888; font-size: 10px;")
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+        w.setFixedHeight(30)
+        self.set_body_widget(w)
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._poll)
+        self._poller.start(3000)
+        QTimer.singleShot(200, self._poll)
+
+    def cleanup(self):
+        self._poller.stop()
+
+    def _poll(self):
+        try:
+            import subprocess, json
+            r = subprocess.run(["swaymsg", "-t", "get_tree"], capture_output=True, text=True, timeout=5)
+            tree = json.loads(r.stdout)
+            def find_focused(node):
+                if node.get("focused"):
+                    return node
+                for c in node.get("nodes", []) + node.get("floating_nodes", []):
+                    f = find_focused(c)
+                    if f:
+                        return f
+                return None
+            win = find_focused(tree)
+            if win:
+                name = win.get("name", "")[:80]
+                app = win.get("app_id", "") or "unknown"
+                pid = win.get("pid", 0)
+                self._label.setText(f"Focus: {name}")
+                for s in self._sockets:
+                    if s.label == "out":
+                        s.push_data({"app_id": app, "title": name, "pid": pid, "type": "process"})
+        except Exception:
+            pass
+
+    def on_data_received(self, socket: SocketItem, data):
+        pass
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"get_focused_window","description":"Get the currently focused window title and app","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "get_focused_window":
+            self._poll()
+            return self._label.text()
+        return f"Unknown: {name}"
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"type": "process", "ready": true}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Pinboard Node — persistent sticky note with rich text
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Pinboard", "Persistent sticky-note card with rich text")
+class PinboardNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Pinboard", QColor("#202010"), 280)
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+        self._editor = QTextEdit()
+        self._editor.setPlaceholderText("Pin a note here...")
+        self._editor.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 6px; font-size: 11px; }"
+            "QTextEdit:focus { border-color: #ffd54f; }"
+        )
+        self._editor.setMinimumHeight(50)
+        self._editor.textChanged.connect(self._on_change)
+        layout.addWidget(self._editor)
+        w.setFixedHeight(80)
+        self.set_body_widget(w)
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            text = data.get("text", data.get("content", ""))
+            if text:
+                self._editor.setPlainText(text)
+
+    def _on_change(self):
+        text = self._editor.toPlainText()
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"text": text, "type": "pinboard"})
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"text": self._editor.toPlainText(), "type": "pinboard"}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["content"] = self._editor.toHtml()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        c = data.get("content", "")
+        if c:
+            self._editor.setHtml(c)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Bool Switch Node — toggleable true/false state that pushes on change
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Bool Switch", "Toggleable true/false state that pushes on change")
+class BoolSwitchNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Bool Switch", QColor("#201a1a"), 180)
+        self._state = False
+        self._build_ui()
+        self.add_socket("in", "command")
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+        self._btn = QPushButton("OFF")
+        self._btn.setCheckable(True)
+        self._btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #888; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 6px 20px; font-size: 14px; font-weight: bold; }"
+            "QPushButton:checked { background: #00cc66; color: #080909; border-color: #00cc66; }"
+        )
+        self._btn.clicked.connect(self._toggle)
+        layout.addWidget(self._btn)
+        w.setFixedHeight(40)
+        self.set_body_widget(w)
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            val = data.get("value", data.get("state"))
+            if val is not None:
+                self._state = bool(val)
+                self._btn.setChecked(self._state)
+                self._btn.setText("ON" if self._state else "OFF")
+                for s in self._sockets:
+                    if s.label == "out":
+                        s.push_data({"value": self._state, "type": "bool"})
+
+    def _toggle(self):
+        self._state = self._btn.isChecked()
+        self._btn.setText("ON" if self._state else "OFF")
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"value": self._state, "type": "bool"})
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"value": self._state, "type": "bool"}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["state"] = self._state
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._state = data.get("state", False)
+        self._btn.setChecked(self._state)
+        self._btn.setText("ON" if self._state else "OFF")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Momentary Button Node — push-to-activate trigger
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Button", "Push-to-activate trigger — fires on press and release")
+class MomentaryButtonNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Button", QColor("#1a1a20"), 180)
+        self._build_ui()
+        self.add_socket("in", "event")
+        self.add_socket("out", "event")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+        self._btn = QPushButton("Trigger")
+        self._btn.setStyleSheet(
+            "QPushButton { background: #ff4444; color: #080909; border: none; "
+            "border-radius: 4px; padding: 6px 20px; font-size: 14px; font-weight: bold; }"
+            "QPushButton:pressed { background: #cc0000; }"
+            "QPushButton:hover { background: #ff6666; }"
+        )
+        self._btn.pressed.connect(self._on_press)
+        self._btn.released.connect(self._on_release)
+        layout.addWidget(self._btn)
+        self._label = QLabel("")
+        self._label.setStyleSheet("color: #666; font-size: 9px;")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._label)
+        w.setFixedHeight(55)
+        self.set_body_widget(w)
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in" and data.get("event") == "trigger":
+            self._on_press()
+            self._on_release()
+
+    def _on_press(self):
+        self._label.setText("pressed")
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"event": "press", "type": "button"})
+
+    def _on_release(self):
+        self._label.setText("released")
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"event": "release", "type": "button"})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Fauxnix OTG Node — mobile dashboard server with QR code
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Fauxnix OTG", "Mobile dashboard server — scan QR code to access from your phone")
+class FauxnixOTGNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Fauxnix OTG", QColor("#1a1020"), 300)
+        self._server = None
+        self._ips: dict = {}
+        self._build_ui()
+        self.add_socket("out", "data")
+        self._start_server()
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._status_label = QLabel("Starting server...")
+        self._status_label.setStyleSheet("color: #b366ff; font-size: 12px; font-weight: bold;")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._status_label)
+
+        self._qr_label = QLabel()
+        self._qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._qr_label.setMinimumHeight(160)
+        self._qr_label.setStyleSheet("background: #fff; border-radius: 6px; padding: 8px;")
+        layout.addWidget(self._qr_label)
+
+        self._ips_label = QLabel("Detecting IPs...")
+        self._ips_label.setStyleSheet("color: #888; font-size: 10px;")
+        self._ips_label.setWordWrap(True)
+        self._ips_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._ips_label)
+
+        btn_row = QHBoxLayout()
+        restart_btn = QPushButton("Restart")
+        restart_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #b366ff; border: 1px solid #b366ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { background: #b366ff; color: #080909; }"
+        )
+        restart_btn.clicked.connect(self._restart)
+        btn_row.addWidget(restart_btn)
+
+        stop_btn = QPushButton("Stop")
+        stop_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #888; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { border-color: #ff4444; color: #ff4444; }"
+        )
+        stop_btn.clicked.connect(self._stop)
+        btn_row.addWidget(stop_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(240)
+        self.set_body_widget(w)
+
+        self._poller = QTimer()
+        self._poller.timeout.connect(self._update_status)
+        self._poller.start(10000)
+
+    def _start_server(self):
+        try:
+            from ..otg_server import OTGServer, get_ips, generate_qr_svg
+            self._server = OTGServer()
+            self._server.start()
+            self._ips = get_ips()
+            self._update_status()
+
+            # Push data to connected nodes
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"otg_url": f"http://{self._ips.get('lan', '?')}:8921", "type": "otg"})
+        except Exception as e:
+            self._status_label.setText(f"Error: {e}")
+            self._status_label.setStyleSheet("color: #ff4444; font-size: 12px;")
+
+    def _update_status(self):
+        if not self._server or not self._server.running:
+            self._status_label.setText("Server stopped")
+            self._status_label.setStyleSheet("color: #888; font-size: 12px;")
+            return
+        try:
+            from ..otg_server import get_ips, generate_qr_svg
+            self._ips = get_ips()
+            lan = self._ips.get("lan", "unknown")
+            ts = self._ips.get("tailscale", "unknown")
+            url = f"http://{lan}:8921"
+            ts_url = f"http://{ts}:8921"
+
+            self._status_label.setText(f"Active — {lan}:8921")
+            self._status_label.setStyleSheet("color: #00cc66; font-size: 12px; font-weight: bold;")
+            self._ips_label.setText(f"LAN: {lan}:8921\nTailscale: {ts}:8921")
+
+            # Generate QR as pixmap from SVG
+            svg = generate_qr_svg(url)
+            from PyQt6.QtCore import QByteArray
+            # Use QSvgRenderer to render to pixmap
+            from PyQt6.QtSvg import QSvgRenderer
+            from PyQt6.QtGui import QPixmap, QPainter
+            renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+            pixmap = QPixmap(160, 160)
+            pixmap.fill(Qt.GlobalColor.white)
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            self._qr_label.setPixmap(pixmap)
+        except Exception:
+            pass
+
+    def _stop(self):
+        if self._server:
+            self._server.stop()
+            self._status_label.setText("Server stopped")
+            self._status_label.setStyleSheet("color: #888; font-size: 12px;")
+
+    def _restart(self):
+        self._stop()
+        self._start_server()
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"get_otg_url","description":"Get the OTG mobile dashboard URL for phone access","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "get_otg_url":
+            return f"http://{self._ips.get("lan", "?")}:8921"
+        return f"Unknown: {name}"
+
+    def output_data(self, socket: SocketItem) -> dict:
+        if self._ips:
+            return {"otg_url": f"http://{self._ips.get('lan', '?')}:8921", "type": "otg"}
+        return {"type": "otg"}
+
+    def cleanup(self):
+        self._poller.stop()
+        self._stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Screenshot Node — capture screen region via grim + slurp
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Screenshot", "Capture a screen region using grim + slurp")
+class ScreenshotNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Screenshot", QColor("#201010"), 240)
+        self._last_path = ""
+        self._build_ui()
+        self.add_socket("out", "file")
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"take_screenshot","description":"Capture a screenshot of a screen region","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "take_screenshot":
+            self._capture()
+            return f"Screenshot: {self._last_path}"
+        return f"Unknown: {name}"
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+        self._label = QLabel("No screenshot")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("color: #888; font-size: 11px; padding: 12px; border: 2px dashed #2a2d33; border-radius: 8px;")
+        self._label.setMinimumHeight(40)
+        layout.addWidget(self._label)
+        btn = QPushButton("Capture Region")
+        btn.setStyleSheet(
+            "QPushButton { background: #ff4444; color: #080909; border: none; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #ff6666; }"
+        )
+        btn.clicked.connect(self._capture)
+        layout.addWidget(btn)
+        w.setFixedHeight(80)
+        self.set_body_widget(w)
+
+    def _capture(self):
+        import subprocess, time
+        path = f"/tmp/fauxnix-screenshot-{int(time.time())}.png"
+        try:
+            subprocess.run(["grim", "-g", "$(slurp)", path], shell=True, timeout=30)
+            if __import__("os").path.exists(path):
+                self._last_path = path
+                self._label.setText(f"Saved: {path.split('/')[-1]}")
+                for s in self._sockets:
+                    if s.label == "out":
+                        s.push_data({"file": path, "type": "file", "screenshot": True})
+        except Exception as e:
+            self._label.setText(f"Error: {e}")
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["last_path"] = self._last_path
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._last_path = data.get("last_path", "")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Context Discovery Node — gathers context from all connected nodes
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Context", "Gather context from all connected nodes and present it for the assistant")
+class ContextDiscoveryNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Context", QColor("#101a20"), 320)
+        self._build_ui()
+        self.add_socket("in", "data")
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+        self._content = QTextEdit()
+        self._content.setReadOnly(True)
+        self._content.setMinimumHeight(80)
+        self._content.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 10px; }"
+        )
+        layout.addWidget(self._content)
+        btn = QPushButton("Gather Context")
+        btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        btn.clicked.connect(self._gather)
+        layout.addWidget(btn)
+        w.setFixedHeight(130)
+        self.set_body_widget(w)
+
+    def _gather(self):
+        self._content.clear()
+        lines = ["Context Constellation:"]
+        for data in self.input_data():
+            source = data.get("_from", "?")
+            socket = data.get("_socket", "?")
+            for k, v in data.items():
+                if not k.startswith("_"):
+                    lines.append(f"  [{source}.{socket}] {k}: {str(v)[:120]}")
+        text = "\n".join(lines)
+        self._content.setPlainText(text)
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data({"context": text, "type": "context"})
+
+    def on_data_received(self, socket: SocketItem, data):
+        self._gather()
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"gather_context","description":"Gather context from all connected nodes on the canvas","parameters":{"type":"object","properties":{}}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "gather_context":
+            self._gather()
+            return self._content.toPlainText()[:2000]
+        return f"Unknown: {name}"
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"context": self._content.toPlainText(), "type": "context"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TTS Node — speak text aloud via speech-dispatcher
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("TTS", "Text-to-speech — speaks text aloud using speech-dispatcher")
+class TTSNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("TTS", QColor("#1a1025"), 280)
+        self._speaking = False
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "event")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._label = QLabel("Ready")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
+        layout.addWidget(self._label)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Type text to speak...")
+        self._input.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #ce93d8; }"
+        )
+        self._input.returnPressed.connect(self._speak_input)
+        layout.addWidget(self._input)
+
+        btn_row = QHBoxLayout()
+        speak_btn = QPushButton("Speak")
+        speak_btn.setStyleSheet(
+            "QPushButton { background: #ce93d8; color: #080909; border: none; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #e1bee7; }"
+        )
+        speak_btn.clicked.connect(self._speak_input)
+        btn_row.addWidget(speak_btn)
+
+        stop_btn = QPushButton("Stop")
+        stop_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #ff4444; border: 1px solid #ff4444; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
+            "QPushButton:hover { background: #ff4444; color: #080909; }"
+        )
+        stop_btn.clicked.connect(self._stop)
+        btn_row.addWidget(stop_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(95)
+        self.set_body_widget(w)
+
+    def _speak_input(self):
+        text = self._input.text().strip()
+        if not text:
+            return
+        self._input.clear()
+        self._speak(text)
+
+    def _speak(self, text: str):
+        if self._speaking:
+            self._stop()
+        import subprocess, threading
+        self._speaking = True
+        self._label.setText(f'Speaking...')
+        def run():
+            try:
+                subprocess.run(["spd-say", text], timeout=30)
+            except Exception:
+                pass
+            self._speaking = False
+            self._label.setText("Ready")
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"event": "spoken", "text": text[:100], "type": "audio"})
+        threading.Thread(target=run, daemon=True).start()
+
+    def _stop(self):
+        import subprocess
+        try:
+            subprocess.run(["spd-say", "--stop"], timeout=5)
+        except Exception:
+            pass
+        self._speaking = False
+        self._label.setText("Ready")
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            text = data.get("text", data.get("content", ""))
+            if text:
+                self._speak(text)
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"speak_text","description":"Speak text aloud using speech synthesis","parameters":{"type":"object","properties":{"text":{"type":"string","description":"The text to speak aloud"}},"required":["text"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "speak_text":
+            text = arguments.get("text", "")
+            if text:
+                self._speak(text)
+                return f"Speaking: {text[:80]}"
+        return f"Unknown: {name}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Audio Input Node — record from microphone via PipeWire
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Audio Input", "Record audio from microphone via PipeWire — outputs file path for transcription")
+class AudioInputNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Audio Input", QColor("#102020"), 260)
+        self._recording = False
+        self._last_file = ""
+        self._build_ui()
+        self.add_socket("out", "file")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._label = QLabel("Ready")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("color: #888; font-size: 12px; padding: 12px; border: 2px dashed #2a2d33; border-radius: 8px;")
+        self._label.setMinimumHeight(40)
+        layout.addWidget(self._label)
+
+        btn_row = QHBoxLayout()
+        record_btn = QPushButton("Record")
+        record_btn.setStyleSheet(
+            "QPushButton { background: #ef5350; color: #080909; border: none; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #ff7043; }"
+            "QPushButton:checked { background: #c62828; }"
+        )
+        record_btn.setCheckable(True)
+        record_btn.clicked.connect(self._toggle_record)
+        self._record_btn = record_btn
+        btn_row.addWidget(record_btn)
+
+        stop_btn = QPushButton("Stop")
+        stop_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #888; border: 1px solid #2a2d33; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #ff4444; color: #ff4444; }"
+        )
+        stop_btn.clicked.connect(self._stop)
+        btn_row.addWidget(stop_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(85)
+        self.set_body_widget(w)
+
+    def _toggle_record(self):
+        if self._recording:
+            self._stop()
+        else:
+            self._start()
+
+    def _start(self):
+        import subprocess, threading, time
+        ts = str(int(time.time()))
+        self._last_file = f"/tmp/fauxnix-audio-{ts}.wav"
+        self._recording = True
+        self._record_btn.setChecked(True)
+        self._label.setText("Recording...")
+        self._process = subprocess.Popen(
+            ["pw-record", self._last_file],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def _stop(self):
+        if not self._recording:
+            return
+        self._recording = False
+        self._record_btn.setChecked(False)
+        if hasattr(self, '_process') and self._process:
+            self._process.terminate()
+            self._process.wait(timeout=3)
+        if self._last_file and __import__("os").path.exists(self._last_file):
+            size = __import__("os").path.getsize(self._last_file)
+            self._label.setText(f"Saved: {self._last_file.split('/')[-1]}\n{size} bytes")
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"file": self._last_file, "type": "audio", "size": size})
+        else:
+            self._label.setText("No audio captured")
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"file": self._last_file, "type": "audio"}
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["last_file"] = self._last_file
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._last_file = data.get("last_file", "")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Audio Transcriber Node — speech-to-text via faster-whisper
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Transcriber", "Speech-to-text via faster-whisper. Drop an audio file or wire Audio Input for live transcription.")
+class AudioTranscriberNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Transcriber", QColor("#102520"), 300)
+        self._model = None
+        self._last_text = ""
+        self._build_ui()
+        self.add_socket("in", "file")
+        self.add_socket("out", "text")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        self._label = QLabel("Ready — model: tiny")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("color: #888; font-size: 11px; padding: 8px;")
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+
+        self._output = QTextEdit()
+        self._output.setReadOnly(True)
+        self._output.setMinimumHeight(60)
+        self._output.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 11px; }"
+        )
+        layout.addWidget(self._output)
+
+        btn_row = QHBoxLayout()
+        model_combo = QComboBox()
+        model_combo.addItems(["tiny", "base", "small"])
+        model_combo.setCurrentText("tiny")
+        model_combo.setStyleSheet(
+            "QComboBox { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 2px 6px; font-size: 10px; }"
+        )
+        model_combo.currentTextChanged.connect(self._set_model)
+        btn_row.addWidget(model_combo)
+
+        transcribe_btn = QPushButton("Transcribe")
+        transcribe_btn.setStyleSheet(
+            "QPushButton { background: #4fc3f7; color: #080909; border: none; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #81d4fa; }"
+        )
+        transcribe_btn.clicked.connect(self._transcribe_last)
+        btn_row.addWidget(transcribe_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(140)
+        self.set_body_widget(w)
+
+    def _set_model(self, size: str):
+        self._model = None
+        self._label.setText(f"Ready — model: {size}")
+
+    def _load_model(self, size: str = "tiny"):
+        try:
+            from faster_whisper import WhisperModel
+            self._label.setText(f"Loading model {size}...")
+            self._model = WhisperModel(size, device="cpu", compute_type="int8")
+            self._label.setText(f"Ready — model: {size}")
+        except Exception as e:
+            self._label.setText(f"Error: {e}")
+
+    def _transcribe_last(self):
+        if not self._last_file:
+            self._output.append('<span style="color:#666;">No audio file. Record or drop one first.</span>')
+            return
+        self._transcribe(self._last_file)
+
+    def _transcribe(self, path: str):
+        import subprocess
+        # Convert to 16kHz mono WAV if needed
+        tmp_path = "/tmp/fauxnix-transcribe-input.wav"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", path, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", tmp_path],
+                capture_output=True, timeout=30,
+            )
+            path = tmp_path
+        except Exception:
+            pass  # Use original if ffmpeg not available
+
+        if not self._model:
+            self._load_model("tiny")
+        if not self._model:
+            self._output.append('<span style="color:#ff4444;">Model not loaded. Install faster-whisper.</span>')
+            return
+
+        self._label.setText("Transcribing...")
+        try:
+            segments, info = self._model.transcribe(path, beam_size=5)
+            text_parts = []
+            for seg in segments:
+                text_parts.append(seg.text.strip())
+            self._last_text = " ".join(text_parts)
+            self._output.append(f'<b>Transcribed:</b> {self._last_text}')
+            self._label.setText(f"Done — {info.language} ({info.duration:.1f}s)")
+            for s in self._sockets:
+                if s.label == "out":
+                    s.push_data({"text": self._last_text, "language": info.language, "type": "text"})
+        except Exception as e:
+            self._label.setText(f"Error: {e}")
+            self._output.append(f'<span style="color:#ff4444;">{e}</span>')
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            path = data.get("file", data.get("path", ""))
+            if path:
+                self._last_file = path
+                self._label.setText(f"File: {path.split('/')[-1]}")
+                self._transcribe(path)
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"text": self._last_text, "type": "text"}
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"transcribe_audio","description":"Transcribe an audio file to text using faster-whisper","parameters":{"type":"object","properties":{"file":{"type":"string","description":"Path to the audio file"}},"required":["file"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "transcribe_audio":
+            path = arguments.get("file", self._last_file)
+            if path:
+                self._transcribe(path)
+                return self._last_text[:500]
+            return "No audio file provided"
+        return f"Unknown: {name}"
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["last_text"] = self._last_text
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._last_text = data.get("last_text", "")
+        if self._last_text:
+            self._output.append(self._last_text)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Nexus Connect Node — bridge to remote Nexus desktop for large models
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Nexus Connect", "Connect to your Nexus desktop for larger models. Route queries through the data socket.")
+class NexusConnectNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Nexus Connect", QColor("#1a1025"), 340)
+        self._nexus_ip = "100.126.117.60"
+        self._nexus_port = 11434
+        self._models: list[str] = []
+        self._selected_model = ""
+        self._connected = False
+        self._build_ui()
+        self.add_socket("in", "text")
+        self.add_socket("out", "text")
+
+        QTimer.singleShot(500, self._scan)
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        # Status header
+        self._status = QLabel("Nexus: scanning...")
+        self._status.setStyleSheet("color: #888; font-size: 12px; font-weight: bold;")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        # IP display
+        ip_row = QHBoxLayout()
+        self._ip_label = QLabel(self._nexus_ip)
+        self._ip_label.setStyleSheet("color: #ce93d8; font-size: 11px;")
+        ip_row.addWidget(self._ip_label)
+        ip_row.addStretch()
+        layout.addLayout(ip_row)
+
+        # Model selector
+        self._model_combo = QComboBox()
+        self._model_combo.setStyleSheet(
+            "QComboBox { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 3px 6px; font-size: 10px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: #141518; color: #d4d4d4; selection-background-color: #ff7800; }"
+        )
+        self._model_combo.currentTextChanged.connect(self._on_model_change)
+        layout.addWidget(self._model_combo)
+
+        # Quick test area
+        self._response = QTextEdit()
+        self._response.setReadOnly(True)
+        self._response.setMaximumHeight(80)
+        self._response.setStyleSheet(
+            "QTextEdit { background: #0d0e12; color: #b0b0c0; border: 1px solid #1e1e24; "
+            "border-radius: 4px; padding: 4px; font-size: 10px; }"
+        )
+        layout.addWidget(self._response)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        scan_btn = QPushButton("Scan")
+        scan_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #ce93d8; border: 1px solid #ce93d8; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { background: #ce93d8; color: #080909; }"
+        )
+        scan_btn.clicked.connect(self._scan)
+        btn_row.addWidget(scan_btn)
+
+        ping_btn = QPushButton("Ping")
+        ping_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        ping_btn.clicked.connect(self._ping)
+        btn_row.addWidget(ping_btn)
+        layout.addLayout(btn_row)
+
+        w.setFixedHeight(190)
+        self.set_body_widget(w)
+
+    def _scan(self):
+        self._status.setText("Nexus: scanning...")
+        self._status.setStyleSheet("color: #888; font-size: 12px; font-weight: bold;")
+        try:
+            import urllib.request, json
+            req = urllib.request.Request(f"http://{self._nexus_ip}:{self._nexus_port}/api/tags")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                self._models = [m["name"] for m in data.get("models", [])]
+                self._connected = True
+                self._model_combo.clear()
+                self._model_combo.addItems(self._models)
+                if self._models:
+                    self._model_combo.setCurrentIndex(0)
+                self._status.setText(f"Nexus: {len(self._models)} models")
+                self._status.setStyleSheet("color: #00cc66; font-size: 12px; font-weight: bold;")
+        except Exception:
+            self._connected = False
+            self._status.setText("Nexus: unreachable")
+            self._status.setStyleSheet("color: #ff4444; font-size: 12px; font-weight: bold;")
+
+    def _on_model_change(self, model: str):
+        self._selected_model = model
+
+    def _ping(self):
+        if not self._connected:
+            self._scan()
+            return
+        self._response.clear()
+        self._response.append('<span style="color:#888;">Pinging...</span>')
+        try:
+            import urllib.request, json
+            body = json.dumps({
+                "model": self._selected_model or (self._models[0] if self._models else "qwen3:1.7b"),
+                "prompt": "Say 'nexus online' in one word.",
+                "stream": False,
+                "options": {"num_predict": 10},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"http://{self._nexus_ip}:{self._nexus_port}/api/generate",
+                data=body, method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+                self._response.clear()
+                self._response.append(data.get("response", "").strip())
+                for s in self._sockets:
+                    if s.label == "out":
+                        s.push_data({"model": self._selected_model, "response": data.get("response", "").strip(), "source": "nexus", "type": "text"})
+        except Exception as e:
+            self._response.clear()
+            self._response.append(f'<span style="color:#ff4444;">{e}</span>')
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "in":
+            prompt = data.get("text", data.get("prompt", ""))
+            if prompt:
+                self._query_nexus(prompt)
+
+    def _query_nexus(self, prompt: str):
+        if not self._connected:
+            self._response.append('<span style="color:#ff4444;">Nexus offline</span>')
+            return
+        self._response.clear()
+        self._response.append('<span style="color:#888;">Nexus thinking...</span>')
+        try:
+            import urllib.request, json
+            model = self._selected_model or (self._models[0] if self._models else "qwen3:1.7b")
+            body = json.dumps({
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": 512},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"http://{self._nexus_ip}:{self._nexus_port}/api/generate",
+                data=body, method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read())
+                response = data.get("response", "").strip()
+                self._response.clear()
+                self._response.append(response)
+                for s in self._sockets:
+                    if s.label == "out":
+                        s.push_data({"text": response, "model": model, "source": "nexus", "type": "text"})
+        except Exception as e:
+            self._response.clear()
+            self._response.append(f'<span style="color:#ff4444;">{e}</span>')
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {"nexus_ip": self._nexus_ip, "connected": self._connected, "models": self._models, "type": "nexus"}
+
+    def tool_schema(self) -> dict | None:
+        return {"type":"function","function":{"name":"query_nexus","description":"Send a prompt to the Nexus desktop for large-model inference","parameters":{"type":"object","properties":{"prompt":{"type":"string","description":"The prompt to send to Nexus"}},"required":["prompt"]}}}
+
+    def tool_invoke(self, name: str, arguments: dict) -> str:
+        if name == "query_nexus":
+            prompt = arguments.get("prompt", "")
+            if prompt:
+                self._query_nexus(prompt)
+                return self._response.toPlainText()[:1000]
+        return f"Unknown: {name}"
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["nexus_ip"] = self._nexus_ip
+        d["selected_model"] = self._selected_model
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._nexus_ip = data.get("nexus_ip", self._nexus_ip)
+        self._selected_model = data.get("selected_model", "")
+        QTimer.singleShot(500, self._scan)
+
+
+@register_node_type("Group", "Visual container to anchor and organize nodes on the canvas")
+class GroupNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Group", QColor("#2a1a3a"), 400)
+        self._build_ui()
+        self.add_socket("in", "data")
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: transparent;")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(4)
+
+        self._name_input = QLineEdit("Group")
+        self._name_input.setStyleSheet(
+            "QLineEdit { background: rgba(0,0,0,80); color: #d4d4d4; border: 1px solid #3a3050; "
+            "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #b380ff; }"
+        )
+        self._name_input.textChanged.connect(lambda t: setattr(self, '_title', t or 'Group'))
+        layout.addWidget(self._name_input)
+
+        hint = QLabel("Place nodes on this card to group them. Drag the group to move them together.")
+        hint.setStyleSheet("color: #555; font-size: 10px; padding: 12px 8px; background: transparent;")
+        hint.setWordWrap(True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+        layout.addStretch()
+        self.set_body_widget(w)
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["label"] = self._name_input.text()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._name_input.setText(data.get("label", "Group"))
+
+
+@register_node_type("App Window", "Launch any app in its own Sway window — tracked from canvas")
+class AppWindowNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("App Window", QColor("#1a2540"), 380)
+        self._process = None
+        self._win_id = 0
+        self._tracked_ids = set()
+        self._build_ui()
+        self.add_socket("in", "command")
+        self.add_socket("out", "event")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(3)
+
+        row = QHBoxLayout()
+        self._cmd_input = QLineEdit()
+        self._cmd_input.setPlaceholderText("firefox / foot / gimp / chromium ...")
+        self._cmd_input.setStyleSheet(
+            "QLineEdit { background: #0d0e12; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #00c8ff; }"
+        )
+        self._cmd_input.returnPressed.connect(self._launch)
+        row.addWidget(self._cmd_input)
+
+        launch_btn = QPushButton("Launch")
+        launch_btn.setFixedHeight(22)
+        launch_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 2px 8px; font-size: 10px; }"
+            "QPushButton:hover { border-color: #00c8ff; color: #00c8ff; }"
+        )
+        launch_btn.clicked.connect(self._launch)
+        row.addWidget(launch_btn)
+
+        close_btn = QPushButton("Kill")
+        close_btn.setFixedSize(32, 22)
+        close_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #888; border: 1px solid #2a2d33; "
+            "border-radius: 3px; font-size: 10px; }"
+            "QPushButton:hover { background: #ff4444; color: white; }"
+        )
+        close_btn.clicked.connect(self._close_app)
+        row.addWidget(close_btn)
+        layout.addLayout(row)
+
+        self._status = QLabel("Ready — type app name and launch")
+        self._status.setStyleSheet("color: #666; font-size: 10px; padding: 4px; background: transparent;")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+        layout.addStretch()
+        self.set_body_widget(w)
+        self._watchdog = QTimer(self.widget)
+        self._watchdog.timeout.connect(self._check_alive)
+
+    def _launch(self):
+        cmd = self._cmd_input.text().strip()
+        if not cmd:
+            return
+        import subprocess, shlex, os
+        self._app_command = cmd
+        try:
+            args = shlex.split(cmd)
+            env = os.environ.copy()
+            env.setdefault("DISPLAY", ":1")
+            env.setdefault("WAYLAND_DISPLAY", "wayland-1")
+            self._process = subprocess.Popen(
+                args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+            )
+            self._status.setText(f"Running: {cmd} (PID {self._process.pid})")
+            self._status.setStyleSheet("color: #00cc66; font-size: 10px; padding: 4px; background: transparent;")
+            self._poll_count = 0
+            self._poll_timer = QTimer(self.widget)
+            self._poll_timer.timeout.connect(self._find_and_track)
+            self._poll_timer.start(300)
+        except Exception as e:
+            self._status.setText(f"Error: {e}")
+            self._status.setStyleSheet("color: #ff4444; font-size: 10px; padding: 4px; background: transparent;")
+
+    def _find_and_track(self):
+        self._poll_count += 1
+        if self._process and self._process.poll() is not None:
+            self._poll_timer.stop()
+            self._status.setText(f"Exited immediately: {self._app_command}")
+            self._status.setStyleSheet("color: #ff4444; font-size: 10px; padding: 4px; background: transparent;")
+            self._process = None
+            return
+        new_window = self._find_new_window()
+        if new_window:
+            self._poll_timer.stop()
+            self._win_id = new_window
+            self._move_to_app_workspace(new_window)
+            self._status.setText(f"Active: {self._cmd_input.text().strip()} (con {new_window})")
+            self._status.setStyleSheet("color: #00c8ff; font-size: 10px; padding: 4px; background: transparent;")
+            self._watchdog.start(2000)
+            return
+        if self._poll_count > 25:
+            self._poll_timer.stop()
+            if self._process and self._process.poll() is None:
+                self._status.setText(f"Launched (PID {self._process.pid}) - no window found")
+            else:
+                self._status.setText(f"Failed: {self._cmd_input.text().strip()}")
+            self._status.setStyleSheet("color: #ff7800; font-size: 10px; padding: 4px; background: transparent;")
+
+    def _find_new_window(self):
+        import subprocess, json, os
+        sock = os.environ.get("SWAYSOCK", "")
+        if not sock:
+            import glob
+            socks = glob.glob("/run/user/1000/sway-ipc.*")
+            if socks: sock = socks[0]
+        if not sock:
+            return 0
+        try:
+            out = subprocess.run(
+                ["swaymsg", "-s", sock, "-t", "get_tree"],
+                capture_output=True, text=True, timeout=2
+            )
+            d = json.loads(out.stdout)
+            windows = []
+            def walk(n):
+                if n.get("type") in ("con", "floating_con") and n.get("name"):
+                    windows.append((n.get("id", 0), n.get("name", ""), n.get("pid", 0)))
+                for c in n.get("nodes", []) + n.get("floating_nodes", []):
+                    walk(c)
+            walk(d)
+            windows.sort(key=lambda x: x[0], reverse=True)
+            for con_id, name, pid in windows:
+                if con_id not in self._tracked_ids and name not in ("Fauxnix Workspace", "root"):
+                    self._tracked_ids.add(con_id)
+                    return con_id
+        except Exception:
+            pass
+        return 0
+
+    def _move_to_app_workspace(self, con_id):
+        import subprocess, os
+        sock = os.environ.get("SWAYSOCK", "")
+        if not sock:
+            import glob
+            socks = glob.glob("/run/user/1000/sway-ipc.*")
+            if socks: sock = socks[0]
+        if not sock:
+            return
+        ws_num = 10 + (con_id % 89)
+        ws_name = f"{ws_num}:App"
+        subprocess.run(["swaymsg", "-s", sock, f"[con_id={con_id}]", "move", "to", "workspace", ws_name],
+                       capture_output=True, timeout=2)
+        subprocess.run(["swaymsg", "-s", sock, f"[con_id={con_id}]", "fullscreen", "enable"],
+                       capture_output=True, timeout=2)
+        subprocess.run(["swaymsg", "-s", sock, "workspace", ws_name],
+                       capture_output=True, timeout=2)
+
+    def _check_alive(self):
+        if self._process and self._process.poll() is not None:
+            self._status.setText(f"Exited (code {self._process.returncode}): {self._app_command}")
+            self._status.setStyleSheet("color: #888; font-size: 10px; padding: 4px; background: transparent;")
+            self._watchdog.stop()
+            self._process = None
+            self._return_to_canvas()
+
+    def _return_to_canvas(self):
+        import subprocess, os
+        sock = os.environ.get("SWAYSOCK", "")
+        if not sock:
+            import glob
+            socks = glob.glob("/run/user/1000/sway-ipc.*")
+            if socks: sock = socks[0]
+        if sock:
+            subprocess.run(["swaymsg", "-s", sock, "workspace", "2:Fauxnix"],
+                           capture_output=True, timeout=2)
+
+    def _close_app(self):
+        if self._process:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+            self._status.setText(f"Killed: {self._app_command}")
+            self._status.setStyleSheet("color: #ff4444; font-size: 10px; padding: 4px; background: transparent;")
+            self._process = None
+        self._watchdog.stop()
+        self._poll_timer.stop() if hasattr(self, '_poll_timer') and self._poll_timer.isActive() else None
+        self._return_to_canvas()
+
+    def on_data_received(self, socket, data):
+        if socket.label == "in":
+            cmd = data if isinstance(data, str) else data.get("command", "")
+            if cmd:
+                self._cmd_input.setText(str(cmd))
+                self._launch()
+
+    def cleanup(self):
+        self._watchdog.stop()
+        if self._process:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["app_command"] = self._cmd_input.text().strip()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        cmd = data.get("app_command", "")
+        if cmd:
+            self._cmd_input.setText(cmd)

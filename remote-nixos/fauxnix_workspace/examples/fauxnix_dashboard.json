@@ -1,0 +1,19 @@
+{
+  "name": "Fauxnix Dashboard",
+  "description": "Default workspace — clock, weather, telemetry, settings, chat, terminal, context. Add more nodes via + button. All wired for continuity.",
+  "nodes": [
+    { "type": "Clock", "id": "clock", "x": -400, "y": -300 },
+    { "type": "Weather", "id": "weather", "x": -150, "y": -300 },
+    { "type": "Telemetry", "id": "telemetry", "x": 100, "y": -300 },
+    { "type": "Settings", "id": "settings", "x": 350, "y": -300, "w": 320 },
+    { "type": "Chat", "id": "chat", "x": -200, "y": 0, "w": 420, "model": "fennix-local" },
+    { "type": "Terminal", "id": "terminal", "x": 300, "y": 0, "w": 500 },
+    { "type": "Context", "id": "context", "x": -200, "y": 250, "w": 340 }
+  ],
+  "connections": [
+    { "node_a": "telemetry", "socket_a": 0, "node_b": "context", "socket_b": 0 },
+    { "node_a": "weather", "socket_a": 0, "node_b": "context", "socket_b": 0 },
+    { "node_a": "settings", "socket_a": 1, "node_b": "context", "socket_b": 0 },
+    { "node_a": "context", "socket_a": 1, "node_b": "chat", "socket_b": 0 }
+  ]
+}

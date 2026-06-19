@@ -1,0 +1,19 @@
+{
+  "name": "System Control",
+  "description": "Chat-driven system control. Chat discovers Settings and Terminal tools. Wire Bool Switch to Settings to toggle dimming. Wire Process to Chat for desktop awareness.",
+  "nodes": [
+    { "type": "Chat", "id": "chat", "x": 0, "y": 0, "w": 420, "model": "fennix-local" },
+    { "type": "Settings", "id": "settings", "x": -350, "y": -100, "w": 320 },
+    { "type": "Terminal", "id": "terminal", "x": 350, "y": -100, "w": 500 },
+    { "type": "Telemetry", "id": "telemetry", "x": -600, "y": -100 },
+    { "type": "Process", "id": "process", "x": -350, "y": 150, "w": 280 },
+    { "type": "Bool Switch", "id": "dim_switch", "x": -600, "y": 80 },
+    { "type": "Preview", "id": "preview", "x": 350, "y": 150, "w": 320 }
+  ],
+  "connections": [
+    { "node_a": "telemetry", "socket_a": 0, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "process", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "dim_switch", "socket_a": 1, "node_b": "settings", "socket_b": 0 },
+    { "node_a": "settings", "socket_a": 1, "node_b": "preview", "socket_b": 0 }
+  ]
+}

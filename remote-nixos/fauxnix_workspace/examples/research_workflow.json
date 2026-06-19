@@ -1,0 +1,23 @@
+{
+  "name": "Research Workflow",
+  "description": "Chat-driven research pipeline. Chat discovers Web Search and Memory tools from the canvas, routes results through Router to Context for synthesis.",
+  "nodes": [
+    { "type": "Chat", "id": "chat", "x": 0, "y": 0, "w": 420, "model": "fennix-local" },
+    { "type": "Web Search", "id": "web_search", "x": -350, "y": -150, "w": 300 },
+    { "type": "Memory", "id": "memory", "x": -350, "y": 80, "w": 300 },
+    { "type": "Router", "id": "router", "x": 350, "y": -80 },
+    { "type": "Context", "id": "context", "x": 550, "y": -80, "w": 320 },
+    { "type": "Preview", "id": "preview", "x": 550, "y": 120, "w": 340 },
+    { "type": "Notes", "id": "notes", "x": 0, "y": 250, "w": 300 },
+    { "type": "Pinboard", "id": "pinboard", "x": -350, "y": 250, "w": 300 }
+  ],
+  "connections": [
+    { "node_a": "web_search", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "memory", "socket_a": 0, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "chat", "socket_a": 1, "node_b": "router", "socket_b": 0 },
+    { "node_a": "router", "socket_a": 0, "node_b": "context", "socket_b": 0 },
+    { "node_a": "context", "socket_a": 1, "node_b": "preview", "socket_b": 0 },
+    { "node_a": "notes", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "pinboard", "socket_a": 0, "node_b": "context", "socket_b": 0 }
+  ]
+}

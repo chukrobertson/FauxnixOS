@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fauxshell</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell" id="shell">
+      <nav class="nav" aria-label="Fauxshell navigation">
+        <button class="icon-button" id="backButton" title="Back" aria-label="Back">
+          <span aria-hidden="true">&lsaquo;</span>
+        </button>
+        <button class="icon-button" id="homeButton" title="Home" aria-label="Home">
+          <span class="fox-mark" aria-hidden="true"></span>
+        </button>
+        <button class="icon-button" id="forwardButton" title="Forward" aria-label="Forward">
+          <span aria-hidden="true">&rsaquo;</span>
+        </button>
+        <div class="route-pill" id="routeLabel">Home</div>
+        <button class="text-button" data-action="apps">Apps</button>
+        <button class="text-button" data-action="launcher">Fennix</button>
+      </nav>
+
+      <section class="view active" data-view="home" aria-label="Home dashboard">
+        <section class="hero-card">
+          <p class="eyebrow">FauxnixOS</p>
+          <h1 id="greeting">Hello.</h1>
+          <p id="clockLine" class="muted">Starting shell</p>
+          <div class="quick-actions">
+            <button data-action="thread:web">Web</button>
+            <button data-action="notes">Notes</button>
+            <button data-action="thread:fauxnix">Workspace</button>
+            <button data-action="thread:cowriter">Cowriter</button>
+          </div>
+        </section>
+
+        <section class="card weather-card" data-route="weather">
+          <div class="card-heading">
+            <span>Weather</span>
+            <button class="mini-button" data-route-target="weather">Open</button>
+          </div>
+          <div class="weather-symbol" id="weatherSymbol">--</div>
+          <p class="muted" id="weatherSummary">Location awaits setup</p>
+        </section>
+
+        <section class="card calendar-card calendar-card--primary" data-route="calendar">
+          <div class="card-heading">
+            <span>Calendar</span>
+            <button class="mini-button" data-route-target="calendar">Open</button>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </section>
+
+        <section class="card empty-card" aria-label="Empty dashboard card"></section>
+
+        <section class="card apps-card">
+          <div class="card-heading">
+            <span>Apps</span>
+            <button class="mini-button" data-action="apps">Open</button>
+          </div>
+          <div class="app-grid">
+            <button data-action="thread:web">Web</button>
+            <button data-action="thread:terminal">Term</button>
+            <button data-action="thread:fennix">Chat</button>
+            <button data-action="thread:cowriter">Write</button>
+            <button data-action="thread:admin">Admin</button>
+            <button data-action="thread:root">Root</button>
+            <button data-action="thread:fauxdex">Code</button>
+          </div>
+        </section>
+
+        <section class="card telemetry-card" data-route="telemetry">
+          <div class="card-heading">
+            <span>Telemetry</span>
+            <button class="mini-button" data-route-target="telemetry">Open</button>
+          </div>
+          <div class="gauge-row">
+            <div class="gauge" id="cpuGauge" style="--value: 0"><span>CPU</span><small id="cpuValue">--</small></div>
+            <div class="gauge" id="ramGauge" style="--value: 0"><span>RAM</span><small id="ramValue">--</small></div>
+            <div class="gauge" id="loadGauge" style="--value: 0"><span>LOAD</span><small id="loadValue">--</small></div>
+          </div>
+          <div class="telemetry-status">
+            <div class="status-grid">
+              <span>Net</span><strong id="netState">checking</strong>
+              <span>Audio</span><strong id="audioState">checking</strong>
+              <span>Power</span><strong id="powerState">checking</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="card resume-card" data-route="threads">
+          <div class="card-heading">
+            <span>Pick Up Where You Left Off</span>
+            <button class="mini-button" data-route-target="threads">Open</button>
+          </div>
+          <div id="sessionsList">
+            <button class="session-row" data-action="thread:fennix">Fennix local assistant</button>
+            <button class="session-row" data-action="thread:fauxnix">Fauxnix workspace</button>
+            <button class="session-row" data-action="thread:cowriter">Cowriter notes</button>
+          </div>
+          <div class="notes-preview">
+            <div class="card-heading compact">
+              <span>Notes / Clipboard</span>
+              <button class="mini-button" data-action="notes">Open</button>
+            </div>
+            <p class="muted" id="notesSummary">Checking notes</p>
+            <div id="notesList"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view detail-view" data-view="weather">
+        <h2>Weather</h2>
+        <p class="muted" id="weatherDetailLocation">Location not set</p>
+        <p id="weatherDetailSummary">Set weather location from Fennix.</p>
+      </section>
+
+      <section class="view detail-view" data-view="status">
+        <h2>Status</h2>
+        <div class="detail-grid">
+          <button data-action="thread:terminal">Open Terminal</button>
+          <button data-action="thread:admin">Open Admin</button>
+          <button data-action="thread:root">Open Root</button>
+          <button data-action="apps">Open Apps</button>
+          <button data-action="thread:fennix">Open Fennix</button>
+        </div>
+      </section>
+
+      <section class="view detail-view" data-view="calendar">
+        <h2>Calendar</h2>
+        <div id="largeCalendar" class="large-calendar"></div>
+      </section>
+
+      <section class="view detail-view" data-view="telemetry">
+        <h2>Telemetry</h2>
+        <div class="gauge-row large">
+          <div class="gauge" id="detailCpuGauge" style="--value: 0"><span>CPU</span><small id="detailCpuValue">--</small></div>
+          <div class="gauge" id="detailRamGauge" style="--value: 0"><span>RAM</span><small id="detailRamValue">--</small></div>
+          <div class="gauge" id="detailBatteryGauge" style="--value: 0"><span>BAT</span><small id="detailBatteryValue">--</small></div>
+          <div class="gauge" id="detailLoadGauge" style="--value: 0"><span>LOAD</span><small id="detailLoadValue">--</small></div>
+        </div>
+        <p class="muted" id="telemetryDetails">Waiting for Fauxd</p>
+      </section>
+
+      <section class="view detail-view" data-view="threads">
+        <h2>Threads</h2>
+        <div class="detail-grid" id="threadsGrid">
+          <button data-action="thread:web">Web</button>
+          <button data-action="thread:fennix">Fennix</button>
+          <button data-action="thread:fauxnix">Fauxnix</button>
+          <button data-action="thread:cowriter">Cowriter</button>
+          <button data-action="thread:admin">Admin</button>
+          <button data-action="thread:root">Root</button>
+          <button data-action="thread:fauxdex">Fauxdex</button>
+          <button data-action="thread:terminal">Terminal</button>
+        </div>
+      </section>
+
+      <div class="gesture-ring" id="gestureRing"></div>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

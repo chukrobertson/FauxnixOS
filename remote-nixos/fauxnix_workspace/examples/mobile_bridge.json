@@ -1,0 +1,22 @@
+{
+  "name": "Mobile Bridge",
+  "description": "Connect your phone to Fauxnix. OTG server exposes Chat + Clipboard + Notes to mobile. Scan QR on the OTG card to open the dashboard on your phone.",
+  "nodes": [
+    { "type": "Fauxnix OTG", "id": "otg", "x": -200, "y": -80, "w": 320 },
+    { "type": "Chat", "id": "chat", "x": 0, "y": 120, "w": 380, "model": "fennix-local" },
+    { "type": "Notes", "id": "notes", "x": -350, "y": 120, "w": 300 },
+    { "type": "Clock", "id": "clock", "x": -350, "y": -200 },
+    { "type": "Telemetry", "id": "telemetry", "x": -100, "y": -200 },
+    { "type": "Weather", "id": "weather", "x": 150, "y": -200 },
+    { "type": "Process", "id": "process", "x": 350, "y": 0, "w": 280 },
+    { "type": "Screenshot", "id": "screenshot", "x": 350, "y": -150 },
+    { "type": "Preview", "id": "preview", "x": 350, "y": 220, "w": 320 }
+  ],
+  "connections": [
+    { "node_a": "otg", "socket_a": 0, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "telemetry", "socket_a": 0, "node_b": "otg", "socket_b": 0 },
+    { "node_a": "weather", "socket_a": 0, "node_b": "otg", "socket_b": 0 },
+    { "node_a": "screenshot", "socket_a": 0, "node_b": "preview", "socket_b": 0 },
+    { "node_a": "process", "socket_a": 1, "node_b": "chat", "socket_b": 0 }
+  ]
+}

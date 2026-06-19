@@ -1,0 +1,21 @@
+{
+  "name": "Development Workspace",
+  "description": "Dev setup with terminal, chat, file access, and process tracking. Use tabs for workspace switching — each tab is a thread of continuity.",
+  "nodes": [
+    { "type": "Chat", "id": "chat", "x": 0, "y": 0, "w": 420, "model": "qwen2.5-coder:14b" },
+    { "type": "Terminal", "id": "terminal", "x": -350, "y": -150, "w": 560 },
+    { "type": "Files", "id": "files", "x": -600, "y": -150, "w": 320 },
+    { "type": "Process", "id": "process", "x": -350, "y": 100, "w": 280 },
+    { "type": "Context", "id": "context", "x": 0, "y": 150, "w": 320 },
+    { "type": "Text Note", "id": "project_notes", "x": -600, "y": 80, "w": 300 },
+    { "type": "Preview", "id": "preview", "x": 350, "y": 100, "w": 340 }
+  ],
+  "connections": [
+    { "node_a": "terminal", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "files", "socket_a": 0, "node_b": "context", "socket_b": 0 },
+    { "node_a": "process", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "project_notes", "socket_a": 0, "node_b": "context", "socket_b": 0 },
+    { "node_a": "context", "socket_a": 1, "node_b": "chat", "socket_b": 0 },
+    { "node_a": "chat", "socket_a": 1, "node_b": "preview", "socket_b": 0 }
+  ]
+}
