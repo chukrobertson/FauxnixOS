@@ -1544,6 +1544,30 @@ def screen_power_status_response() -> str:
     return "Screen dimming settings:\n" + "\n".join(f"- {line}" for line in output.splitlines())
 
 
+def screenshot_status_response() -> str:
+    code, output = command_output(["fauxnix-screenshot", "status"], timeout=3, limit=1000)
+    if code != 0:
+        return "I could not read screenshot status yet: " + (output or "fauxnix-screenshot failed")
+    return "Screenshot memory status:\n" + "\n".join(f"- {line}" for line in output.splitlines())
+
+
+def screenshot_capture_response() -> str:
+    code, output = command_output(["fauxnix-screenshot", "--json"], timeout=15, limit=2000)
+    if code != 0:
+        return "I could not capture a screenshot yet: " + (output or "fauxnix-screenshot failed")
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return "Captured a screenshot, but the tool returned unreadable metadata:\n" + output
+    path = str(payload.get("path") or "").strip()
+    method = str(payload.get("method") or "unknown").strip()
+    size = payload.get("size_bytes")
+    size_text = f", {size} bytes" if isinstance(size, int) else ""
+    if not path:
+        return "Captured a screenshot, but the tool did not report the file path."
+    return f"Captured screenshot for Fauxnix memory:\n- {path}\n- method: {method}{size_text}"
+
+
 def display_status_response() -> str:
     code, output = command_output(["fauxnix-display", "status"], timeout=4, limit=1800)
     if code != 0:
@@ -1783,6 +1807,12 @@ def local_action_for_text(user_text: str, store: FennixStore | None = None) -> L
 
     if "weather" in normalized and "location" in normalized and any(word in normalized for word in ("status", "show", "current", "what")):
         return LocalAction(weather_location_status_response(), status="Weather location ready")
+
+    screenshot_terms = ("screenshot", "screen shot", "capture screen", "capture the screen", "remember screen", "remember the screen", "visual memory")
+    if has_any_phrase(normalized, screenshot_terms):
+        if any(word in normalized for word in ("status", "where", "latest", "last")):
+            return LocalAction(screenshot_status_response(), status="Screenshot status ready")
+        return LocalAction(screenshot_capture_response(), status="Screenshot captured")
 
     if normalized in {"lock", "lock screen", "lock the screen", "lock computer", "lock the computer"}:
         return LocalAction(
@@ -2273,6 +2303,161 @@ class FennixNotesWindow:
         self.status_var.set("Copied note")
 
 
+GNOME_THEME = {
+    "window": "#1c1c1f",
+    "sidebar": "#202024",
+    "toolbar": "#242429",
+    "surface": "#25252a",
+    "field": "#17171a",
+    "field_alt": "#1f1f24",
+    "border": "#3a3a42",
+    "border_soft": "#2f2f36",
+    "text": "#f5f5f7",
+    "muted": "#a9a9b3",
+    "subtle": "#7f818c",
+    "accent": "#0a84ff",
+    "accent_hover": "#1f8fff",
+    "accent_pressed": "#006edb",
+    "accent_orange": "#ff9f0a",
+    "assistant": "#64d2ff",
+    "user": "#ffb340",
+    "system": "#a9a9b3",
+    "selection_text": "#ffffff",
+}
+
+
+def apply_gnome_ttk_theme(root: tk.Misc) -> dict[str, str]:
+    colors = GNOME_THEME
+    try:
+        root.configure(bg=colors["window"])
+    except tk.TclError:
+        pass
+
+    root.option_add("*Font", "Cantarell 10")
+    root.option_add("*selectBackground", colors["accent"])
+    root.option_add("*selectForeground", colors["selection_text"])
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+
+    style.configure(".", background=colors["window"], foreground=colors["text"], font=("Cantarell", 10))
+    style.configure("TFrame", background=colors["window"], borderwidth=0)
+    style.configure("Fennix.Sidebar.TFrame", background=colors["sidebar"])
+    style.configure("Fennix.Toolbar.TFrame", background=colors["toolbar"])
+    style.configure("Fennix.Surface.TFrame", background=colors["surface"])
+    style.configure("TLabel", background=colors["window"], foreground=colors["text"])
+    style.configure("Fennix.Sidebar.TLabel", background=colors["sidebar"], foreground=colors["text"])
+    style.configure("Fennix.Title.TLabel", background=colors["toolbar"], foreground=colors["text"], font=("Cantarell", 14, "bold"))
+    style.configure("Fennix.Muted.TLabel", background=colors["toolbar"], foreground=colors["muted"])
+    style.configure("Fennix.Status.TLabel", background=colors["toolbar"], foreground=colors["muted"], padding=(12, 7))
+    style.configure(
+        "TButton",
+        background=colors["field_alt"],
+        foreground=colors["text"],
+        bordercolor=colors["border"],
+        lightcolor=colors["field_alt"],
+        darkcolor=colors["field_alt"],
+        focusthickness=1,
+        focuscolor=colors["accent"],
+        padding=(10, 6),
+        relief="flat",
+    )
+    style.map(
+        "TButton",
+        background=[
+            ("disabled", colors["surface"]),
+            ("pressed", colors["accent_pressed"]),
+            ("active", colors["accent_hover"]),
+        ],
+        foreground=[("disabled", colors["subtle"]), ("pressed", colors["selection_text"]), ("active", colors["selection_text"])],
+        bordercolor=[("focus", colors["accent"])],
+    )
+    style.configure(
+        "TEntry",
+        fieldbackground=colors["field"],
+        background=colors["field"],
+        foreground=colors["text"],
+        bordercolor=colors["border"],
+        lightcolor=colors["border_soft"],
+        darkcolor=colors["border_soft"],
+        insertcolor=colors["text"],
+        padding=(8, 6),
+    )
+    style.map(
+        "TEntry",
+        fieldbackground=[("disabled", colors["surface"]), ("focus", colors["field"])],
+        foreground=[("disabled", colors["subtle"])],
+        bordercolor=[("focus", colors["accent"])],
+    )
+    style.configure(
+        "TCombobox",
+        fieldbackground=colors["field"],
+        background=colors["field_alt"],
+        foreground=colors["text"],
+        arrowcolor=colors["text"],
+        bordercolor=colors["border"],
+        lightcolor=colors["border_soft"],
+        darkcolor=colors["border_soft"],
+        padding=(8, 5),
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", colors["field"]), ("focus", colors["field"])],
+        selectbackground=[("readonly", colors["field"])],
+        selectforeground=[("readonly", colors["text"])],
+        bordercolor=[("focus", colors["accent"])],
+    )
+    for widget in ("TRadiobutton", "TCheckbutton"):
+        style.configure(widget, background=colors["window"], foreground=colors["text"], indicatorcolor=colors["field"])
+        style.map(
+            widget,
+            background=[("active", colors["window"])],
+            foreground=[("disabled", colors["subtle"])],
+            indicatorcolor=[("selected", colors["accent"]), ("active", colors["accent_hover"])],
+        )
+    style.configure("Vertical.TScrollbar", background=colors["field_alt"], troughcolor=colors["field"], bordercolor=colors["border"])
+    style.configure("Horizontal.TScrollbar", background=colors["field_alt"], troughcolor=colors["field"], bordercolor=colors["border"])
+    return colors
+
+
+def configure_text_surface(widget: tk.Text, colors: dict[str, str], *, height: int | None = None) -> None:
+    options = {
+        "bg": colors["field"],
+        "fg": colors["text"],
+        "insertbackground": colors["text"],
+        "selectbackground": colors["accent"],
+        "selectforeground": colors["selection_text"],
+        "highlightthickness": 1,
+        "highlightbackground": colors["border_soft"],
+        "highlightcolor": colors["accent"],
+        "borderwidth": 0,
+        "relief": "flat",
+        "font": ("Cantarell", 10),
+    }
+    if height is not None:
+        options["height"] = height
+    widget.configure(**options)
+
+
+def configure_listbox_surface(widget: tk.Listbox, colors: dict[str, str]) -> None:
+    widget.configure(
+        bg=colors["field"],
+        fg=colors["text"],
+        selectbackground=colors["accent"],
+        selectforeground=colors["selection_text"],
+        highlightthickness=1,
+        highlightbackground=colors["border_soft"],
+        highlightcolor=colors["accent"],
+        borderwidth=0,
+        relief="flat",
+        activestyle="none",
+        font=("Cantarell", 10),
+    )
+
+
 class FennixApp:
     def __init__(
         self,
@@ -2295,6 +2480,7 @@ class FennixApp:
         self.outbox: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
         self.workspace_window: tk.Toplevel | None = None
+        self.colors = apply_gnome_ttk_theme(root)
 
         root.title("Fennix")
         root.geometry("1100x720")
@@ -2318,67 +2504,71 @@ class FennixApp:
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(self.root, padding=8)
+        left = ttk.Frame(self.root, padding=12, style="Fennix.Sidebar.TFrame")
         left.grid(row=0, column=0, sticky="nsew")
         left.rowconfigure(3, weight=1)
 
-        ttk.Label(left, text="Conversations").grid(row=0, column=0, sticky="w")
+        ttk.Label(left, text="Conversations", style="Fennix.Sidebar.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Button(left, text="New", command=self.new_conversation).grid(row=1, column=0, sticky="ew", pady=(6, 6))
         conversation_search = ttk.Entry(left, textvariable=self.conversation_search_var)
         conversation_search.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         conversation_search.insert(0, "")
         self.conversation_search_var.trace_add("write", lambda *_args: self.refresh_conversations())
         self.conversation_list = tk.Listbox(left, width=28, exportselection=False)
+        configure_listbox_surface(self.conversation_list, self.colors)
         self.conversation_list.grid(row=3, column=0, sticky="nsew")
         self.conversation_list.bind("<<ListboxSelect>>", self.select_conversation)
 
-        center = ttk.Frame(self.root, padding=(0, 8, 0, 8))
+        center = ttk.Frame(self.root, padding=(0, 10, 0, 10))
         center.grid(row=0, column=1, sticky="nsew")
         center.columnconfigure(0, weight=1)
         center.rowconfigure(1, weight=1)
 
-        toolbar = ttk.Frame(center)
+        toolbar = ttk.Frame(center, padding=(12, 8), style="Fennix.Toolbar.TFrame")
         toolbar.grid(row=0, column=0, sticky="ew", padx=8)
         self.build_fox_mark(toolbar).pack(side="left", padx=(0, 8))
-        ttk.Label(toolbar, text="Fennix").pack(side="left", padx=(0, 14))
-        ttk.Label(toolbar, text="Route").pack(side="left")
+        ttk.Label(toolbar, text="Fennix", style="Fennix.Title.TLabel").pack(side="left", padx=(0, 14))
+        ttk.Label(toolbar, text="Route", style="Fennix.Muted.TLabel").pack(side="left")
         ttk.Radiobutton(toolbar, text="Local", variable=self.route_var, value="local").pack(side="left", padx=(8, 0))
         ttk.Radiobutton(toolbar, text="Parent", variable=self.route_var, value="parent").pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="Status", command=self.check_status).pack(side="right")
         ttk.Button(toolbar, text="Summarize", command=self.summarize_conversation).pack(side="right", padx=(0, 8))
 
-        chat_frame = ttk.Frame(center)
+        chat_frame = ttk.Frame(center, style="Fennix.Surface.TFrame")
         chat_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         chat_frame.columnconfigure(0, weight=1)
         chat_frame.rowconfigure(0, weight=1)
 
-        self.chat = tk.Text(chat_frame, wrap="word", state="disabled", padx=12, pady=12)
+        self.chat = tk.Text(chat_frame, wrap="word", state="disabled", padx=16, pady=16)
+        configure_text_surface(self.chat, self.colors)
         chat_scroll = ttk.Scrollbar(chat_frame, orient="vertical", command=self.chat.yview)
         self.chat.configure(yscrollcommand=chat_scroll.set)
         self.chat.grid(row=0, column=0, sticky="nsew")
         chat_scroll.grid(row=0, column=1, sticky="ns")
-        self.chat.tag_configure("user", foreground="#173b7a", spacing1=8, spacing3=8)
-        self.chat.tag_configure("assistant", foreground="#1d5f3f", spacing1=8, spacing3=8)
-        self.chat.tag_configure("system", foreground="#666666", spacing1=8, spacing3=8)
+        self.chat.tag_configure("user", foreground=self.colors["user"], spacing1=8, spacing3=8)
+        self.chat.tag_configure("assistant", foreground=self.colors["assistant"], spacing1=8, spacing3=8)
+        self.chat.tag_configure("system", foreground=self.colors["system"], spacing1=8, spacing3=8)
 
         input_frame = ttk.Frame(center)
         input_frame.grid(row=2, column=0, sticky="ew", padx=8)
         input_frame.columnconfigure(0, weight=1)
-        self.input = tk.Text(input_frame, height=4, wrap="word")
+        self.input = tk.Text(input_frame, height=4, wrap="word", padx=12, pady=10)
+        configure_text_surface(self.input, self.colors, height=4)
         self.input.grid(row=0, column=0, sticky="ew")
         self.input.bind("<Control-Return>", lambda _event: self.send())
         ttk.Button(input_frame, text="Send", command=self.send).grid(row=0, column=1, sticky="ns", padx=(8, 0))
 
-        right = ttk.Frame(self.root, padding=8)
+        right = ttk.Frame(self.root, padding=12, style="Fennix.Sidebar.TFrame")
         right.grid(row=0, column=2, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.columnconfigure(1, weight=1)
         right.rowconfigure(2, weight=1)
-        ttk.Label(right, text="Memory").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(right, text="Memory", style="Fennix.Sidebar.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
         memory_search = ttk.Entry(right, textvariable=self.memory_search_var)
         memory_search.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 6))
         self.memory_search_var.trace_add("write", lambda *_args: self.refresh_memories())
         self.memory_list = tk.Listbox(right, width=34, exportselection=False)
+        configure_listbox_surface(self.memory_list, self.colors)
         self.memory_list.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(0, 6))
         self.memory_entry = ttk.Entry(right)
         self.memory_entry.grid(row=3, column=0, columnspan=2, sticky="ew")
@@ -2402,16 +2592,17 @@ class FennixApp:
         ttk.Button(right, text="Save Session", command=lambda: self.save_cowriter("session")).grid(row=8, column=0, sticky="ew", pady=(6, 0))
         ttk.Button(right, text="Workspace", command=self.show_workspace_status).grid(row=8, column=1, sticky="ew", pady=(6, 0), padx=(6, 0))
 
-        status = ttk.Label(self.root, textvariable=self.status_var, anchor="w", padding=(8, 4))
+        status = ttk.Label(self.root, textvariable=self.status_var, anchor="w", style="Fennix.Status.TLabel")
         status.grid(row=1, column=0, columnspan=3, sticky="ew")
 
     def build_fox_mark(self, parent: tk.Widget) -> tk.Canvas:
-        canvas = tk.Canvas(parent, width=42, height=34, bg="#0b0b0b", highlightthickness=0)
-        orange = "#ff7800"
+        canvas = tk.Canvas(parent, width=42, height=34, bg=self.colors["toolbar"], highlightthickness=0)
+        orange = self.colors["accent_orange"]
         canvas.create_line(4, 3, 16, 23, 21, 17, 26, 23, 38, 3, width=3, fill=orange, joinstyle=tk.MITER)
         canvas.create_line(16, 23, 20, 31, 21, 18, 22, 31, 26, 23, width=3, fill=orange, joinstyle=tk.MITER)
         canvas.create_line(12, 17, 18, 21, width=3, fill=orange)
         canvas.create_line(30, 17, 24, 21, width=3, fill=orange)
+        canvas.create_oval(3, 3, 39, 31, outline=self.colors["accent"], width=1)
         return canvas
 
     def refresh_all(self) -> None:
@@ -2605,6 +2796,7 @@ class FennixApp:
         win.title("Fennix Workspace")
         win.geometry("900x620")
         win.minsize(720, 480)
+        win.configure(bg=self.colors["window"])
         win.columnconfigure(0, weight=1)
         win.rowconfigure(4, weight=1)
         win.protocol("WM_DELETE_WINDOW", self.close_workspace_manager)
@@ -2657,7 +2849,8 @@ class FennixApp:
         output_frame.grid(row=4, column=0, sticky="nsew")
         output_frame.columnconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
-        self.workspace_output = tk.Text(output_frame, wrap="none", state="disabled", padx=10, pady=10)
+        self.workspace_output = tk.Text(output_frame, wrap="none", state="disabled", padx=12, pady=12)
+        configure_text_surface(self.workspace_output, self.colors)
         yscroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.workspace_output.yview)
         xscroll = ttk.Scrollbar(output_frame, orient="horizontal", command=self.workspace_output.xview)
         self.workspace_output.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -4040,7 +4233,7 @@ def main() -> int:
     try:
         store = FennixStore(DB_PATH)
         routes = load_routes()
-        root = tk.Tk()
+        root = tk.Tk(className=APP_NAME)
         ttk.Style().theme_use("clam")
         if args.desktop:
             FennixDesktop(root, store, routes)
