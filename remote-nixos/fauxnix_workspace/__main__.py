@@ -34,7 +34,7 @@ def main():
     if screen:
         geo = screen.availableGeometry()
         window.setGeometry(0, 0, geo.width(), geo.height())
-    window.show()
+    window.showFullScreen()
     sys.exit(app.exec())
 
 

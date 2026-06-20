@@ -76,11 +76,15 @@ class SocketItem:
 
     def node_pos(self) -> QPointF:
         node = self._parent_node
-        rh = node.TITLE_HEIGHT + node.BODY_PAD
+        scale = node._scale
+        title_h = int(node.TITLE_HEIGHT * scale)
+        body_pad = int(node.BODY_PAD * scale)
+        socket_spacing = int(node.SOCKET_SPACING * scale)
+        rh = title_h + body_pad
         if node._body_widget:
-            rh += node._body_widget.height() + node.BODY_PAD
+            rh += node._body_widget.height() + body_pad
         row = self.socket_index // 2
-        y = rh + row * node.SOCKET_SPACING + self.RADIUS
+        y = rh + row * socket_spacing + self.RADIUS
         x = self.RADIUS if self.is_left() else node._node_width - self.RADIUS
         return QPointF(x, y)
 
@@ -135,6 +139,10 @@ class BaseNodeWidget:
         self._title = title
         self._color = color
         self._node_width = width or self.NODE_WIDTH
+        self._base_node_width = self._node_width
+        self._base_node_height = self.MIN_HEIGHT
+        self._base_body_height = 0
+        self._scale = 1.0
         self._sockets: list[SocketItem] = []
         self._body_widget = None
         self._node_id = uuid.uuid4().hex[:12]
@@ -143,6 +151,10 @@ class BaseNodeWidget:
         self._resize_start = QPointF()
         self._drag_start = None
         self._dragging = False
+        # Logical (unscaled) canvas coordinates. Screen position is
+        # pan_offset + logical_pos * scale.
+        self._logical_x = 0.0
+        self._logical_y = 0.0
 
         self.widget = QWidget(parent)
         self.widget._node = self
@@ -166,6 +178,54 @@ class BaseNodeWidget:
     def isSelected(self) -> bool:
         return self._selected
 
+    def set_logical_pos(self, x: float, y: float):
+        self._logical_x = x
+        self._logical_y = y
+
+    def refresh_layout(self, scale: float, pan_offset: QPoint):
+        """Reposition and resize the node widget from logical coords, scale, and pan."""
+        scale_changed = (scale != self._scale)
+        self._scale = scale
+        sx = int(pan_offset.x() + self._logical_x * scale)
+        sy = int(pan_offset.y() + self._logical_y * scale)
+        self.widget.move(sx, sy)
+
+        if scale_changed:
+            # Scale outer size.
+            self._node_width = max(1, int(self._base_node_width * scale))
+            new_height = max(1, int(self._base_node_height * scale))
+            self.widget.setFixedSize(self._node_width, new_height)
+
+            # Scale body widget.
+            if self._body_widget:
+                body_w = max(1, int((self._base_node_width - self.BODY_PAD * 2) * scale))
+                body_h = max(1, int(self._base_body_height * scale))
+                self._body_widget.setFixedSize(body_w, body_h)
+                self._body_widget.move(
+                    int(self.BODY_PAD * scale),
+                    int(self.TITLE_HEIGHT * scale + self.BODY_PAD * scale),
+                )
+
+            self.widget.update()
+
+    def _scale_child_fonts(self, parent: QWidget, scale: float):
+        """Roughly scale fonts of simple child widgets with the canvas.
+
+        Avoids QTextEdit/QPlainTextEdit because reflowing them every frame is
+        expensive and causes stutter.
+        """
+        from PyQt6.QtGui import QFont
+        from PyQt6.QtWidgets import QTextEdit, QPlainTextEdit, QTextBrowser
+        for child in parent.findChildren(QWidget):
+            if isinstance(child, (QTextEdit, QPlainTextEdit, QTextBrowser)):
+                continue
+            font = child.font()
+            base_size = max(8, min(16, font.pointSize() if font.pointSize() > 0 else 11))
+            new_size = max(6, int(base_size * scale))
+            if font.pointSize() != new_size:
+                font.setPointSize(new_size)
+                child.setFont(font)
+
     def add_socket(self, label: str, data_type: str = "data") -> SocketItem:
         s = SocketItem(self, label, data_type)
         s.socket_index = len(self._sockets)
@@ -188,13 +248,20 @@ class BaseNodeWidget:
         h = self.TITLE_HEIGHT + self.BODY_PAD * 2
         if self._body_widget:
             h += self._body_widget.height() + self.BODY_PAD
+            # Store the unscaled body height so refresh_layout can rescale it.
+            self._base_body_height = int(self._body_widget.height() / max(0.01, self._scale))
         n = max(len(self._sockets), 1)
         socket_rows = (n + 1) // 2
         h += socket_rows * self.SOCKET_SPACING + self.BODY_PAD
         h = max(h, self.MIN_HEIGHT)
+        # Store unscaled base height.
+        self._base_node_height = int(h / max(0.01, self._scale))
         self.widget.setFixedSize(self._node_width, h)
 
     def node_type_name(self) -> str:
+        for name, cls in _NODE_TYPES.items():
+            if type(self) is cls:
+                return name
         for name, cls in _NODE_TYPES.items():
             if isinstance(self, cls):
                 return name
@@ -204,25 +271,29 @@ class BaseNodeWidget:
         return {
             "type": self.node_type_name(),
             "id": self._node_id,
-            "x": self.widget.x(),
-            "y": self.widget.y(),
+            "x": self._logical_x,
+            "y": self._logical_y,
             "w": self._node_width,
         }
 
     def deserialize(self, data: dict):
         self._node_id = data.get("id", self._node_id)
-        self.widget.move(data.get("x", 0), data.get("y", 0))
+        self.set_logical_pos(data.get("x", 0), data.get("y", 0))
         w = data.get("w", self._node_width)
         if w != self._node_width:
             self.set_node_width(w)
 
     def set_node_width(self, w: int):
         w = max(self.MIN_WIDTH, w)
-        self._node_width = w
+        self._base_node_width = w
+        self._node_width = int(w * self._scale)
         if self._body_widget:
             bw = min(self._body_widget.sizeHint().width(), w - self.BODY_PAD * 2)
             self._body_widget.setFixedWidth(max(bw, 80))
         self._update_size()
+        # Re-apply scale so the widget resizes correctly.
+        if self._scale != 1.0:
+            self.refresh_layout(self._scale, QPoint(0, 0))
         self.widget.update()
 
     def on_connected(self, socket: SocketItem, peer: SocketItem):
@@ -267,12 +338,12 @@ class BaseNodeWidget:
         return None
 
     def title_rect(self) -> QRect:
-        return QRect(0, 0, self._node_width, self.TITLE_HEIGHT)
+        return QRect(0, 0, self.widget.width(), int(self.TITLE_HEIGHT * self._scale))
 
     def resize_rect(self) -> QRect:
         h = self.widget.height()
-        w = self._node_width
-        rh = self.RESIZE_HANDLE
+        w = self.widget.width()
+        rh = max(6, int(self.RESIZE_HANDLE * self._scale))
         return QRect(w - rh - 2, h - rh - 2, rh + 2, rh + 2)
 
     # ── paint (installed on widget) ────────────────────────────────
@@ -280,8 +351,12 @@ class BaseNodeWidget:
     def _paint_event(self, event):
         painter = QPainter(self.widget)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = self._node_width
+        scale = self._scale
+        w = self.widget.width()
         h = self.widget.height()
+        title_h = int(self.TITLE_HEIGHT * scale)
+        body_pad = int(self.BODY_PAD * scale)
+        radius = max(3, int(8 * scale))
 
         cx, cy = w / 2, h / 2
         glow_radius = max(w, h) * 0.85
@@ -297,35 +372,35 @@ class BaseNodeWidget:
         r = self.widget.rect().adjusted(0, 0, -1, -1)
         painter.setPen(QPen(SELECT_COLOR if self._selected else NODE_BORDER, 2 if self._selected else 1))
         painter.setBrush(NODE_BG)
-        painter.drawRoundedRect(r, 8, 8)
+        painter.drawRoundedRect(r, radius, radius)
 
-        tr = QRectF(0, 0, w, self.TITLE_HEIGHT)
+        tr = QRectF(0, 0, w, title_h)
         grad = QLinearGradient(0, 0, w, 0)
         grad.setColorAt(0, self._color)
         grad.setColorAt(1, self._color.lighter(130))
         painter.setBrush(grad)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(tr, 8, 8)
-        painter.drawRect(QRectF(0, self.TITLE_HEIGHT - 8, w, 8))
+        painter.drawRoundedRect(tr, radius, radius)
+        painter.drawRect(QRectF(0, title_h - radius, w, radius))
 
         painter.setPen(NODE_TITLE_FG)
-        f = QFont(TITLE_FONT[0], 10, QFont.Weight.Bold)
+        f = QFont(TITLE_FONT[0], max(6, int(10 * scale)), QFont.Weight.Bold)
         painter.setFont(f)
         opt = QTextOption()
         opt.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        painter.drawText(tr.adjusted(12, 0, -12, 0), self._title, opt)
+        painter.drawText(tr.adjusted(int(12 * scale), 0, int(-12 * scale), 0), self._title, opt)
 
         painter.setPen(QPen(self._color.lighter(150), 1))
-        painter.drawLine(12, self.TITLE_HEIGHT, w - 12, self.TITLE_HEIGHT)
+        painter.drawLine(int(12 * scale), title_h, w - int(12 * scale), title_h)
 
         for s in self._sockets:
             sp = s.node_pos()
             bp = SocketItem._brush_for(s.data_type)
-            painter.setPen(QPen(QColor("#4a4d55"), 1.5))
+            painter.setPen(QPen(QColor("#4a4d55"), max(1, 1.5 * scale)))
             painter.setBrush(bp)
             painter.drawEllipse(QPointF(sp), SocketItem.RADIUS, SocketItem.RADIUS)
 
-        rh = self.RESIZE_HANDLE
+        rh = max(6, int(self.RESIZE_HANDLE * scale))
         hx, hy = w - rh - 2, h - rh - 2
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#3a3d44"))
@@ -365,10 +440,17 @@ class BaseNodeWidget:
             delta = event.globalPosition().toPoint() - self._drag_start
             if delta.manhattanLength() > 3:
                 self._dragging = True
-                self.widget.move(self.widget.pos() + delta)
+                # Update logical position by the unscaled delta.
+                canvas = self.widget.parentWidget()
+                scale = 1.0
+                if canvas and hasattr(canvas, "_state"):
+                    scale = canvas._state.get("scale", 1.0) or 1.0
+                self._logical_x += delta.x() / scale
+                self._logical_y += delta.y() / scale
+                self.refresh_layout(scale, canvas._state.get("pan_offset", QPoint(0, 0)) if canvas and hasattr(canvas, "_state") else QPoint(0, 0))
                 self._drag_start = event.globalPosition().toPoint()
                 try:
-                    self.widget.parentWidget().update()
+                    canvas.update()
                 except Exception:
                     pass
             event.accept()
@@ -411,7 +493,7 @@ def create_canvas_widget(parent=None):
     w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     state = {
-        "scale": 1.0, "min_scale": 0.1, "max_scale": 3.0,
+        "scale": 1.0, "min_scale": 0.1, "max_scale": 8.0,
         "pan_offset": QPoint(0, 0), "panning": False, "last_pan": QPoint(),
         "nodes": [], "connections": [],
         "drag_socket": None, "drag_end": QPoint(),
@@ -432,7 +514,7 @@ def create_canvas_widget(parent=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.fillRect(w.rect(), CANVAS_BG)
 
-        grid = max(8, int(40 * state["scale"]))
+        grid = max(16, int(40 * state["scale"]))
         alpha = int(max(10, min(50, 50 * state["scale"])))
         dot = QColor(CANVAS_DOT)
         dot.setAlpha(alpha)
@@ -440,16 +522,20 @@ def create_canvas_widget(parent=None):
         painter.setPen(pen)
         ox = state["pan_offset"].x() % grid
         oy = state["pan_offset"].y() % grid
+        # Batch point drawing for much better pan/zoom performance.
+        points = []
         for x in range(ox, w.width() + grid, grid):
             for y in range(oy, w.height() + grid, grid):
-                painter.drawPoint(x, y)
+                points.append(QPointF(x, y))
+        if points:
+            painter.drawPoints(points)
 
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         for conn in state["connections"]:
             a_col = DATA_TYPE_COLORS.get(conn._a.data_type, WIRE_COLOR)
             b_col = DATA_TYPE_COLORS.get(conn._b.data_type, WIRE_COLOR)
             path = conn.path(state["pan_offset"], state["scale"])
-            steps = 24
+            steps = 12
             for i in range(steps + 1):
                 t = i / steps
                 pt = path.pointAtPercent(t)
@@ -542,22 +628,63 @@ def create_canvas_widget(parent=None):
             return
         QWidget.mouseReleaseEvent(w, event)
 
+    def _apply_zoom(factor: float, center: QPointF | None = None):
+        new_scale = state["scale"] * factor
+        if not (state["min_scale"] <= new_scale <= state["max_scale"]):
+            return
+        state["scale"] = new_scale
+        if center is None:
+            center = QPointF(w.width() / 2, w.height() / 2)
+        state["pan_offset"] = QPoint(
+            int(center.x() - (center.x() - state["pan_offset"].x()) * factor),
+            int(center.y() - (center.y() - state["pan_offset"].y()) * factor),
+        )
+        _layout_nodes()
+        w.update()
+
+
+    def _wheel_delta(event):
+        """Return a sensible (dx, dy) for wheel/touchpad events."""
+        ad = event.angleDelta()
+        pd = event.pixelDelta()
+        # Prefer angle delta when available; fall back to pixel delta for
+        # high-resolution touchpads that only report pixel motion.
+        if ad.x() != 0 or ad.y() != 0:
+            return ad.x(), ad.y()
+        return pd.x(), pd.y()
+
     def wheelEvent(event):
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            delta = event.angleDelta().y()
-            factor = 1.1 if delta > 0 else 1 / 1.1
-            new_scale = state["scale"] * factor
-            if state["min_scale"] <= new_scale <= state["max_scale"]:
-                state["scale"] = new_scale
-                cursor_pos = event.position()
-                state["pan_offset"] = QPoint(
-                    int(cursor_pos.x() - (cursor_pos.x() - state["pan_offset"].x()) * factor),
-                    int(cursor_pos.y() - (cursor_pos.y() - state["pan_offset"].y()) * factor),
-                )
-                w.update()
+        mods = event.modifiers()
+        has_ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        has_shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        dx, dy = _wheel_delta(event)
+
+        if has_ctrl:
+            # Touchpads may report scroll as horizontal or vertical deltas.
+            # Use whichever axis has the larger motion.
+            if abs(dx) >= abs(dy):
+                zoom_delta = dx
+            else:
+                zoom_delta = dy
+            if zoom_delta == 0:
+                event.accept()
+                return
+            factor = 1.05 if zoom_delta > 0 else 1 / 1.05
+            _apply_zoom(factor, event.position())
             event.accept()
             return
-        QWidget.wheelEvent(w, event)
+
+        # Normal wheel pans the canvas.
+        if has_shift:
+            # Shift+vertical wheel scrolls horizontally.
+            dx, dy = dy, dx
+        if dx != 0 or dy != 0:
+            # Smooth the wheel increments so the canvas does not jump.
+            pan_delta = QPoint(int(dx / 4), int(dy / 4))
+            state["pan_offset"] += pan_delta
+            _layout_nodes()
+            w.update()
+        event.accept()
 
     def keyPressEvent(event):
         if event.key() == Qt.Key.Key_Delete and state["selected_node"]:
@@ -572,6 +699,10 @@ def create_canvas_widget(parent=None):
                 QWidget.keyPressEvent(w, event)
                 return
             _fit_all()
+            event.accept()
+            return
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and state["selected_node"]:
+            _fit_selected()
             event.accept()
             return
         QWidget.keyPressEvent(w, event)
@@ -592,6 +723,22 @@ def create_canvas_widget(parent=None):
         node.widget.setParent(w)
         node.widget.show()
         state["nodes"].append(node)
+        # If the node has not been assigned logical coords, derive them from
+        # its current screen position at the current scale.
+        if node._logical_x == 0 and node._logical_y == 0 and (node.widget.x() or node.widget.y()):
+            scale = state["scale"]
+            if scale != 0:
+                node.set_logical_pos(
+                    (node.widget.x() - state["pan_offset"].x()) / scale,
+                    (node.widget.y() - state["pan_offset"].y()) / scale,
+                )
+        node.refresh_layout(state["scale"], state["pan_offset"])
+
+    def _layout_nodes():
+        scale = state["scale"]
+        pan = state["pan_offset"]
+        for node in state["nodes"]:
+            node.refresh_layout(scale, pan)
 
     def _remove_node(node):
         node.cleanup()
@@ -610,12 +757,34 @@ def create_canvas_widget(parent=None):
     def _fit_all():
         if not state["nodes"] and not w._hosts:
             return
-        all_widgets = [n.widget for n in state["nodes"]] + [h.widget for h in w._hosts if h.widget.isVisible()]
-        if not all_widgets:
+        nodes = [n for n in state["nodes"]]
+        hosts = [h for h in w._hosts if h.widget.isVisible()]
+        if not nodes and not hosts:
             return
-        xs = [wd.x() for wd in all_widgets]
-        ys = [wd.y() for wd in all_widgets]
-        state["pan_offset"] = QPoint(60 - min(xs), 60 - min(ys))
+        xs = [n._logical_x for n in nodes] + [0 for _ in hosts]
+        ys = [n._logical_y for n in nodes] + [0 for _ in hosts]
+        state["pan_offset"] = QPoint(60, 60)
+        state["scale"] = 1.0
+        _layout_nodes()
+        w.update()
+
+    def _fit_selected():
+        node = state["selected_node"]
+        if node is None:
+            return
+        padding = 36
+        available_w = max(1, w.width() - padding * 2)
+        available_h = max(1, w.height() - padding * 2)
+        node_w = max(1, node._base_node_width)
+        node_h = max(1, node._base_node_height)
+        scale = min(available_w / node_w, available_h / node_h)
+        scale = max(state["min_scale"], min(state["max_scale"], scale))
+        state["scale"] = scale
+        state["pan_offset"] = QPoint(
+            int((w.width() - node_w * scale) / 2 - node._logical_x * scale),
+            int((w.height() - node_h * scale) / 2 - node._logical_y * scale),
+        )
+        _layout_nodes()
         w.update()
 
     # Attach all methods and state to the widget
@@ -630,7 +799,9 @@ def create_canvas_widget(parent=None):
     w._remove_node = _remove_node
     w._make_connection = _make_connection
     w._fit_all = _fit_all
+    w._fit_selected = _fit_selected
     w._find_socket_at = _find_socket_at
+    w._apply_zoom = _apply_zoom
     w._hosts = []
 
     return w
