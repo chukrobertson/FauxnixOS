@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFrame, QDialog, QListWidget, QListWidgetItem,
     QLineEdit, QStackedWidget, QSizePolicy,
 )
-from PyQt6.QtGui import QAction, QGuiApplication
+from PyQt6.QtGui import QAction, QGuiApplication, QKeySequence, QShortcut
 
 from .canvas import (
     BaseNodeWidget, register_node_type, get_node_types, get_node_tooltips,
@@ -149,13 +149,13 @@ def create_desktop():
     tab_close_btns = []
     stack = QStackedWidget()
 
-    # Tab bar at TOP
+    # Tab bar at TOP — also serves as the system bar
     tab_bar = QWidget()
     tab_bar.setFixedHeight(30)
     tab_bar.setStyleSheet("background: rgba(10, 11, 14, 220); border-bottom: 1px solid rgba(30, 30, 38, 150);")
     tab_layout = QHBoxLayout(tab_bar)
     tab_layout.setContentsMargins(6, 0, 6, 0)
-    tab_layout.setSpacing(1)
+    tab_layout.setSpacing(2)
 
     add_btn = QPushButton("+")
     add_btn.setFixedSize(24, 24)
@@ -166,6 +166,170 @@ def create_desktop():
     tab_spacer = QWidget()
     tab_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     tab_layout.addWidget(tab_spacer)
+
+    # Clock + date on the right
+    clock_label = QLabel("")
+    clock_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+    tab_layout.addWidget(clock_label)
+
+    def _update_clock():
+        clock_label.setText(datetime.now().strftime("%H:%M  %a %d"))
+    _update_clock()
+    clock_timer = QTimer(w)
+    clock_timer.timeout.connect(_update_clock)
+    clock_timer.start(15000)
+
+    # Network indicator
+    net_label = QLabel("")
+    net_label.setStyleSheet("color: #666; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+    tab_layout.addWidget(net_label)
+
+    def _update_network():
+        import subprocess
+        try:
+            out = subprocess.run(["nmcli", "-t", "-f", "TYPE,STATE", "device", "status"],
+                                 capture_output=True, text=True, timeout=2)
+            wifi = eth = "-"
+            for line in out.stdout.strip().split("\n"):
+                parts = line.split(":")
+                if len(parts) >= 2 and parts[1] == "connected":
+                    if parts[0] == "wifi":
+                        ssid = subprocess.run(["nmcli", "-t", "-f", "active,ssid", "dev", "wifi", "list"],
+                                              capture_output=True, text=True, timeout=2)
+                        for l in ssid.stdout.strip().split("\n"):
+                            sp = l.split(":")
+                            if len(sp) >= 2 and sp[0] == "yes":
+                                wifi = sp[1][:12]
+                                break
+                    elif parts[0] == "ethernet":
+                        eth = "eth"
+            if wifi != "-":
+                net_label.setText(f"\u25e6 {wifi}")
+                net_label.setStyleSheet("color: #00c8ff; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+            elif eth != "-":
+                net_label.setText("\u2194 eth")
+                net_label.setStyleSheet("color: #00cc66; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+            else:
+                net_label.setText("\u2717 net")
+                net_label.setStyleSheet("color: #555; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+        except Exception:
+            net_label.setText("\u2717")
+            net_label.setStyleSheet("color: #444; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+
+    _update_network()
+    net_timer = QTimer(w)
+    net_timer.timeout.connect(_update_network)
+    net_timer.start(30000)
+
+    # Volume indicator
+    vol_label = QLabel("")
+    vol_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+    tab_layout.addWidget(vol_label)
+
+    def _update_volume():
+        import subprocess
+        try:
+            out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                                 capture_output=True, text=True, timeout=2)
+            vol = 0
+            for part in out.stdout.split():
+                if "." in part:
+                    vol = int(float(part) * 100)
+                    break
+            mute = "MUTED" in out.stdout
+            if mute:
+                vol_label.setText("\U0001f507 mute")
+                vol_label.setStyleSheet("color: #ff4444; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+            else:
+                icon = "\U0001f50a" if vol > 50 else "\U0001f509" if vol > 0 else "\U0001f508"
+                vol_label.setText(f"{icon} {vol}%")
+                vol_label.setStyleSheet("color: #b0b0c0; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+        except Exception:
+            vol_label.setText("\u266b")
+            vol_label.setStyleSheet("color: #555; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+
+    _update_volume()
+    vol_timer = QTimer(w)
+    vol_timer.timeout.connect(_update_volume)
+    vol_timer.start(5000)
+
+    # Mic mute indicator
+    mic_label = QLabel("")
+    mic_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+    tab_layout.addWidget(mic_label)
+
+    def _update_mic():
+        import subprocess
+        try:
+            out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"],
+                                 capture_output=True, text=True, timeout=2)
+            if "MUTED" in out.stdout:
+                mic_label.setText("\U0001f3a4\u0336")
+                mic_label.setStyleSheet("color: #ff4444; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+            else:
+                mic_label.setText("\U0001f3a4")
+                mic_label.setStyleSheet("color: #00cc66; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+        except Exception:
+            mic_label.setText("")
+    _update_mic()
+    mic_timer = QTimer(w)
+    mic_timer.timeout.connect(_update_mic)
+    mic_timer.start(10000)
+
+    # Brightness indicator
+    bri_label = QLabel("")
+    bri_label.setStyleSheet("color: #888; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+    tab_layout.addWidget(bri_label)
+
+    def _update_brightness():
+        import subprocess
+        try:
+            out = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=2)
+            for line in out.stdout.split("\n"):
+                if "intel_backlight" in line:
+                    parts = line.split(",")
+                    if len(parts) >= 4:
+                        pct = parts[3].rstrip("%")
+                        bri_label.setText(f"\u2600 {pct}%")
+                        bri_label.setStyleSheet("color: #b0b0c0; font-size: 11px; padding: 0 6px; background: transparent; border: none;")
+                        return
+        except Exception:
+            pass
+    _update_brightness()
+    bri_timer = QTimer(w)
+    bri_timer.timeout.connect(_update_brightness)
+    bri_timer.start(15000)
+
+    # Power button
+    power_btn = QPushButton("\u23fb")
+    power_btn.setFixedSize(24, 24)
+    power_btn.setToolTip("Power")
+    power_btn.setStyleSheet(
+        "QPushButton { background: transparent; color: #888; border: 1px solid transparent; "
+        "border-radius: 4px; font-size: 13px; }"
+        "QPushButton:hover { color: #ff4444; border-color: #444; background: rgba(255,68,68,10); }"
+    )
+    tab_layout.addWidget(power_btn)
+
+    def _show_power_menu():
+        menu = QMenu(w)
+        menu.setStyleSheet(
+            "QMenu { background: #141518; color: #b0b0b0; border: 1px solid #2a2d33; padding: 4px; }"
+            "QMenu::item { padding: 5px 24px; border-radius: 3px; }"
+            "QMenu::item:selected { background: #ff4444; color: #080909; }"
+        )
+        for label, cmd, color in [
+            ("\u23fb  Power Off", "systemctl poweroff", "#ff4444"),
+            ("\u21bb  Reboot", "systemctl reboot", "#ff7800"),
+            ("\u2b2e  Log Out", "loginctl terminate-user \"$USER\"", "#00c8ff"),
+        ]:
+            act = QAction(label, w)
+            act.triggered.connect(lambda checked, c=cmd: __import__("subprocess").run(["sudo", c]))
+            menu.addAction(act)
+        menu.popup(power_btn.mapToGlobal(QPoint(0, power_btn.height())))
+
+    power_btn.clicked.connect(_show_power_menu)
+
     main_layout.addWidget(tab_bar)
     main_layout.addWidget(stack)
 
@@ -183,6 +347,27 @@ def create_desktop():
     tlayout.setSpacing(2)
 
     zoom_label = QLabel("100%")
+
+    def _current_scale() -> float:
+        canvas = _current_canvas()
+        if canvas and hasattr(canvas, "_state"):
+            return canvas._state.get("scale", 1.0)
+        return 1.0
+
+    def _zoom_canvas(factor: float):
+        canvas = _current_canvas()
+        if canvas and hasattr(canvas, "_apply_zoom"):
+            canvas._apply_zoom(factor)
+            _update_zoom_label()
+
+    def _zoom_in():
+        _zoom_canvas(1.1)
+
+    def _zoom_out():
+        _zoom_canvas(1 / 1.1)
+
+    def _update_zoom_label():
+        zoom_label.setText(f"{int(_current_scale() * 100)}%")
 
     def _pos_toolbar():
         floating_bar.adjustSize()
@@ -298,18 +483,34 @@ def create_desktop():
         if canvas:
             canvas._fit_all()
 
+    def _fit_selected():
+        canvas = _current_canvas()
+        if canvas and hasattr(canvas, "_fit_selected"):
+            canvas._fit_selected()
+
     # ── toolbar ──────────────────────────────────────────────────
 
     for text, tip, cb in [
         ("+", "Add node", _show_add_menu),
         ("Fit", "Fit all", _fit_all),
+        ("Fill", "Fit selected card", _fit_selected),
     ]:
         btn = QPushButton(text)
         btn.setToolTip(tip)
         btn.clicked.connect(cb)
         tlayout.addWidget(btn)
 
+    zoom_out_btn = QPushButton("-")
+    zoom_out_btn.setToolTip("Zoom out")
+    zoom_out_btn.clicked.connect(_zoom_out)
+    tlayout.addWidget(zoom_out_btn)
+
     tlayout.addWidget(zoom_label)
+
+    zoom_in_btn = QPushButton("+")
+    zoom_in_btn.setToolTip("Zoom in")
+    zoom_in_btn.clicked.connect(_zoom_in)
+    tlayout.addWidget(zoom_in_btn)
 
     mgr_btn = QPushButton("Mgr")
     mgr_btn.setToolTip("Workspace snapshots")
@@ -457,6 +658,16 @@ def create_desktop():
 
     if not _auto_restore():
         _new_tab("Main")
+
+    # Keep the floating zoom label in sync with the active canvas.
+    zoom_timer = QTimer(w)
+    zoom_timer.timeout.connect(_update_zoom_label)
+    zoom_timer.start(200)
+
+    # Keyboard zoom shortcuts (also useful when touchpad Ctrl+scroll is lost).
+    QShortcut(QKeySequence("Ctrl++"), w, activated=_zoom_in)
+    QShortcut(QKeySequence("Ctrl+="), w, activated=_zoom_in)
+    QShortcut(QKeySequence("Ctrl+-"), w, activated=_zoom_out)
 
     _pos_toolbar()
 
