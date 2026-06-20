@@ -3,10 +3,21 @@
 { pkgs ? import <nixpkgs> {} }:
 
 let
-  # Collect the Python source tree
+  runtimeTools = [
+    pkgs.xwayland
+    pkgs.xorg.setxkbmap
+    pkgs.xorg.xrdb
+    pkgs.xorg.xkbcomp
+    pkgs.wlrctl
+  ];
+
+  # Collect the Python source tree. Keep only Python files and directories
+  # so Nix does not re-import unrelated files under /etc/nixos.
   fauxnixWorkspaceSource = builtins.path {
     path = ../.;
-    name = "fauxnix-workspace-source";
+    # Bump the name whenever new top-level directories/files are added so
+    # Nix re-evaluates the source filter instead of using a cached snapshot.
+    name = "fauxnix-workspace-source-v2";
     filter = path: type:
       let
         base = baseNameOf path;
@@ -21,21 +32,26 @@ let
     ps.setuptools
     ps.pyqt6
     ps.pyqt6-webengine
+    ps.xlib
   ]);
 
 in
 
 pkgs.stdenv.mkDerivation {
   pname = "fauxnix-workspace";
-  version = "0.1.0";
+  version = "0.1.1";
 
   src = fauxnixWorkspaceSource;
 
-  buildInputs = [ fauxnixWorkspacePython ];
+  buildInputs = [ fauxnixWorkspacePython ] ++ runtimeTools;
 
   buildPhase = ''
-    mkdir -p $out/lib/fauxnix-workspace
-    cp -r fauxnix_workspace $out/lib/fauxnix-workspace/
+    echo "SRC contents:"
+    ls -la $src
+    echo "SRC/fauxnix_workspace contents:"
+    ls -la $src/fauxnix_workspace || true
+    mkdir -p $out/lib/fauxnix-workspace/fauxnix_workspace
+    cp -r $src/fauxnix_workspace/* $out/lib/fauxnix-workspace/fauxnix_workspace/
   '';
 
   installPhase = ''
@@ -44,6 +60,7 @@ pkgs.stdenv.mkDerivation {
     #!${pkgs.runtimeShell}
     export QT_QPA_PLATFORM=xcb
     export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+    export PATH="${pkgs.lib.makeBinPath runtimeTools}:$PATH"
     PYTHONPATH="$out/lib/fauxnix-workspace:$PYTHONPATH"
     exec ${fauxnixWorkspacePython}/bin/python3 -m fauxnix_workspace "$@"
     EOF

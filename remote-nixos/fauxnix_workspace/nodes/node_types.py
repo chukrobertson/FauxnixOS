@@ -5,10 +5,10 @@ import threading
 import urllib.request
 import urllib.parse
 
-from PyQt6.QtCore import Qt, QSize, QRectF, QUrl, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QFont, QPainter, QTextCursor
+from PyQt6.QtCore import Qt, QSize, QRectF, QUrl, QThread, pyqtSignal, QTimer, QPoint, QEvent
+from PyQt6.QtGui import QColor, QFont, QPainter, QTextCursor, QImage, QPixmap, QIcon, QWindow
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QPushButton,
     QLabel, QComboBox, QLineEdit, QPlainTextEdit, QScrollArea,
     QProgressBar, QFrame, QSizePolicy,
 )
@@ -25,6 +25,18 @@ from ..fauxd_client import (
     get_summary, get_telemetry, get_weather, get_thread_cards,
     get_notes as fd_get_notes, get_files_recent,
     get_clipboard, set_clipboard, do_action,
+)
+from ..window_thumbnail import (
+    capture_thumbnail, capture_thumbnail_for_pid, find_window_for_pid,
+    find_window_geometry, raise_window, move_resize_window,
+    _scale_rgba,
+)
+from ..surface_providers.base import SurfaceProvider, InputEvent
+from ..surface_providers.registry import (
+    create_source,
+    normalize_source_spec,
+    source_descriptors,
+    provider_descriptors,
 )
 
 
@@ -674,37 +686,130 @@ class BrowserNode(BaseNodeWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# App Node — launch and track any desktop application via Sway IPC
+def _load_app_icon(icon_name: str) -> QIcon | None:
+    """Load a QIcon from an icon name or desktop-file icon field."""
+    if not icon_name:
+        return None
+    # Try theme icon first.
+    icon = QIcon.fromTheme(icon_name)
+    if not icon.isNull():
+        return icon
+    # Search common icon directories for a matching file.
+    import os, glob
+    roots = [
+        "/run/current-system/sw/share/icons",
+        os.path.expanduser("~/.local/share/icons"),
+        "/usr/share/icons",
+        "/usr/share/pixmaps",
+    ]
+    exts = (".png", ".svg", ".xpm")
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        # Fast paths in standard theme layouts.
+        for sub in ["hicolor", "Adwaita", "breeze", "gnome"]:
+            base = os.path.join(root, sub)
+            if not os.path.isdir(base):
+                continue
+            for size_dir in ["scalable", "symbolic"]:
+                for ext in exts:
+                    candidate = os.path.join(base, size_dir, "apps", f"{icon_name}{ext}")
+                    if os.path.isfile(candidate):
+                        return QIcon(candidate)
+            for size_dir in os.listdir(base):
+                for category in ["apps", "mimetypes"]:
+                    for ext in exts:
+                        candidate = os.path.join(base, size_dir, category, f"{icon_name}{ext}")
+                        if os.path.isfile(candidate):
+                            return QIcon(candidate)
+        # Fallback: shallow search, then recursive if necessary.
+        for path in glob.glob(f"{root}/{icon_name}.*"):
+            if path.lower().endswith(exts):
+                return QIcon(path)
+        for path in glob.glob(f"{root}/**/{icon_name}.*", recursive=True):
+            if path.lower().endswith(exts):
+                return QIcon(path)
+    return None
+
+
+# App Launcher Node — icon grid that spawns a card for each launched app
 # ═══════════════════════════════════════════════════════════════════════
 
-@register_node_type("Apps", "App launcher — scan desktop files, launch with one click. Wired for continuity.")
-class AppNode(BaseNodeWidget):
-    def __init__(self, app_name: str = "firefox", app_label: str = "Firefox"):
+@register_node_type("Apps", "App launcher with icons — click an app to spawn a live card on the canvas")
+class AppLauncherNode(BaseNodeWidget):
+    # Apps we want in the launcher. Everything else is filtered out.
+    _EMBEDDABLE_APPS: set[str] = {
+        "Chromium", "Firefox", "VSCodium",
+        "LibreOffice", "LibreOffice Writer", "LibreOffice Calc",
+        "LibreOffice Impress", "LibreOffice Draw", "LibreOffice Base",
+        "LibreOffice Math",
+        "GIMP", "Amberol", "Krita",
+        "Alacritty", "xterm", "Rofi",
+        "pavucontrol", "Advanced Network Configuration",
+        "Fennix", "Manage Printing",
+    }
+
+    # Force each app onto XWayland so its window can be embedded.
+    _X11_LAUNCH: dict[str, dict] = {
+        "Firefox": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "VSCodium": {"env": {}, "args": ["--ozone-platform=x11"]},
+        "LibreOffice": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Writer": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Calc": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Impress": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Draw": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Base": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "LibreOffice Math": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "GIMP": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "Amberol": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "Krita": {"env": {"QT_QPA_PLATFORM": "xcb"}, "args": []},
+        "Alacritty": {"env": {"WINIT_UNIX_BACKEND": "x11"}, "args": []},
+        "pavucontrol": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "Advanced Network Configuration": {"env": {"GDK_BACKEND": "x11"}, "args": []},
+        "Chromium": {"env": {}, "args": ["--ozone-platform=x11"]},
+    }
+
+    def __init__(self):
         super().__init__("Apps", QColor("#1a2030"), 320)
         self._apps: list[dict] = []
         self._build_ui()
         self.add_socket("out", "data")
+        QTimer.singleShot(200, self._scan)
 
     def _build_ui(self):
         w = QWidget()
         w.setStyleSheet(f"background: {NODE_BG.name()};")
         layout = QVBoxLayout(w)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
+
+        self._filter = QLineEdit()
+        self._filter.setPlaceholderText("Filter apps")
+        self._filter.setStyleSheet(
+            "QLineEdit { background: #111318; color: #d4d4d4; border: 1px solid #262a32; "
+            "border-radius: 5px; padding: 4px 7px; font-size: 11px; }"
+            "QLineEdit:focus { border-color: #00c8ff; }"
+        )
+        self._filter.textChanged.connect(self._render_apps)
+        layout.addWidget(self._filter)
+
+        self._status = QLabel("Scanning apps...")
+        self._status.setStyleSheet("color: #7f8996; font-size: 10px; background: transparent;")
+        layout.addWidget(self._status)
 
         self._grid = QWidget()
-        self._grid_layout = QVBoxLayout(self._grid)
+        self._grid_layout = QGridLayout(self._grid)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._grid_layout.setSpacing(2)
+        self._grid_layout.setSpacing(4)
 
         scroll = QScrollArea()
         scroll.setWidget(self._grid)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        scroll.setMaximumHeight(220)
+        scroll.setMaximumHeight(250)
         layout.addWidget(scroll)
 
-        refresh_btn = QPushButton("Scan Apps")
+        refresh_btn = QPushButton("Rescan Apps")
         refresh_btn.setStyleSheet(
             "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
             "border-radius: 4px; padding: 3px 10px; font-size: 10px; }"
@@ -713,9 +818,8 @@ class AppNode(BaseNodeWidget):
         refresh_btn.clicked.connect(self._scan)
         layout.addWidget(refresh_btn)
 
-        w.setFixedHeight(260)
+        w.setFixedHeight(360)
         self.set_body_widget(w)
-        QTimer.singleShot(200, self._scan)
 
     def _scan(self):
         import os, configparser, glob
@@ -727,61 +831,159 @@ class AppNode(BaseNodeWidget):
             for f in sorted(glob.glob(f"{d}/*.desktop")):
                 try:
                     cfg = configparser.ConfigParser(interpolation=None)
-                    cfg.read_string("[D]\n" + open(f).read())
-                    sec = cfg["D"]
+                    cfg.read(f)
+                    if "Desktop Entry" not in cfg:
+                        continue
+                    sec = cfg["Desktop Entry"]
                     name = sec.get("Name", os.path.basename(f).replace(".desktop", ""))
-                    exe = sec.get("Exec", "").split(" ")[0]
+                    exe = sec.get("Exec", "")
+                    # Drop field codes (%f, %F, %u, %U, etc.)
+                    exe = " ".join(p for p in exe.split() if not p.startswith("%"))
                     icon = sec.get("Icon", "")
+                    startup_wm = sec.get("StartupWMClass", "")
                     nodisplay = sec.get("NoDisplay", "false").lower() == "true"
-                    if nodisplay or not exe or name in seen:
+                    terminal = sec.get("Terminal", "false").lower() == "true"
+                    if nodisplay or terminal or not exe or name in seen:
+                        continue
+                    if name not in self._EMBEDDABLE_APPS:
                         continue
                     seen.add(name)
-                    self._apps.append({"name": name, "exec": exe, "icon": icon, "desktop": f})
+                    x11_cfg = self._X11_LAUNCH.get(name, {"env": {}, "args": []})
+                    self._apps.append({
+                        "name": name, "exec": exe, "icon": icon,
+                        "desktop": f, "startup_wm": startup_wm,
+                        "env": x11_cfg.get("env", {}),
+                        "args": x11_cfg.get("args", []),
+                    })
                 except Exception:
                     pass
 
-        # Clear grid
+        self._render_apps()
+
+    def _render_apps(self, *_):
+        if not hasattr(self, "_grid_layout"):
+            return
+        query = ""
+        if hasattr(self, "_filter"):
+            query = self._filter.text().strip().lower()
+        apps = sorted(self._apps, key=lambda a: a["name"].lower())
+        if query:
+            apps = [
+                app for app in apps
+                if query in app.get("name", "").lower()
+                or query in app.get("exec", "").lower()
+            ]
+
         while self._grid_layout.count():
             item = self._grid_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Add app buttons
-        for app in sorted(self._apps, key=lambda a: a["name"].lower()):
-            btn = QPushButton(f"  {app['name']}")
+        if hasattr(self, "_status"):
+            if query:
+                self._status.setText(f"{len(apps)} of {len(self._apps)} app(s)")
+            else:
+                self._status.setText(f"{len(self._apps)} app(s) launch as cards")
+
+        cols = 4
+        for idx, app in enumerate(apps):
+            btn = QPushButton(app["name"])
+            btn.setToolTip(app["exec"])
+            btn.setFixedSize(68, 68)
             btn.setStyleSheet(
                 "QPushButton { background: #141518; color: #888; border: 1px solid #1e1e24; "
-                "border-radius: 4px; padding: 4px 10px; font-size: 10px; text-align: left; }"
+                "border-radius: 6px; padding: 2px; font-size: 9px; text-align: center; }"
                 "QPushButton:hover { color: #ff7800; border-color: #ff7800; background: #1a1a20; }"
             )
-            btn.clicked.connect(lambda checked, a=app: self._launch(a))
-            self._grid_layout.addWidget(btn)
-        self._grid_layout.addStretch()
+            icon = _load_app_icon(app["icon"])
+            if icon:
+                btn.setIcon(icon)
+                btn.setIconSize(QSize(32, 32))
+            btn.clicked.connect(lambda checked, a=app: self._spawn_card(a))
+            self._grid_layout.addWidget(btn, idx // cols, idx % cols)
 
-    def _launch(self, app: dict):
-        import subprocess
-        try:
-            subprocess.Popen(
-                ["swaymsg", "exec", app["exec"]],
-                start_new_session=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+    def _spawn_card(self, app: dict):
+        canvas = self._find_canvas()
+        if canvas is None:
+            return
+        # Place the new card near the launcher, staggered by how many cards
+        # already exist so they do not stack exactly on top of each other.
+        offset = 30 + (len(canvas._state.get("nodes", [])) % 8) * 30
+        spawn_x = self._logical_x + offset
+        spawn_y = self._logical_y + offset
+
+        # Build a DisplaySource descriptor for this app. The Display card is
+        # the monitor; the local app source owns the private display machinery.
+        import shlex
+        argv = shlex.split(app.get("exec", "")) + app.get("args", [])
+        source_spec = {
+            "kind": "local-app",
+            "argv": argv or ["alacritty"],
+            "env": app.get("env", {}),
+            "width": 1280,
+            "height": 720,
+            "aspect": 16 / 9,
+            "card_title": app.get("name", "App"),
+            "surface_name": app.get("name", "App"),
+            "surface_kind": "app",
+            "source_name": app.get("name", "App"),
+            "source_kind": "local-app",
+            "icon": app.get("icon", ""),
+            "context": {
+                "app": app.get("name", "App"),
+                "exec": app.get("exec", ""),
+                "startup_wm": app.get("startup_wm", ""),
+                "source": "local-app",
+            },
+        }
+        provider = create_source(source_spec)
+
+        card = GenericSurfaceCardNode(
+            provider=provider,
+            source_spec=source_spec,
+            surface_name=app.get("name", "App"),
+            surface_kind="app",
+            width=560,
+            node_title=app.get("name", "App"),
+        )
+        card.set_logical_pos(spawn_x, spawn_y)
+        canvas._add_node(card)
+        # Select the new card so it is visible immediately.
+        if canvas._state.get("selected_node"):
+            canvas._state["selected_node"].deselect()
+        canvas._state["selected_node"] = card
+        card.select()
+        canvas.update()
+        # Launch after the card exists so the user sees feedback immediately.
+        card._launch()
         for s in self._sockets:
             if s.label == "out":
-                s.push_data({"app": app["name"], "exec": app["exec"], "type": "app", "action": "launched"})
+                s.push_data({
+                    "app": app["name"],
+                    "exec": app["exec"],
+                    "type": "display_source",
+                    "source_spec": source_spec,
+                    "action": "spawned_display",
+                })
+
+    def _find_canvas(self):
+        w = self.widget
+        while w:
+            if hasattr(w, "_state") and "nodes" in w._state:
+                return w
+            w = w.parentWidget()
+        return None
 
     def tool_schema(self) -> dict | None:
-        return {"type":"function","function":{"name":"launch_app","description":"Launch a desktop application by name","parameters":{"type":"object","properties":{"app":{"type":"string","description":"App name as shown on the Apps card"}},"required":["app"]}}}
+        return {"type":"function","function":{"name":"launch_app","description":"Launch a desktop application by name from the app grid","parameters":{"type":"object","properties":{"app":{"type":"string","description":"App name as shown on the Apps card"}},"required":["app"]}}}
 
     def tool_invoke(self, name: str, arguments: dict) -> str:
         if name == "launch_app":
             target = arguments.get("app", "").lower()
             for a in self._apps:
                 if target in a["name"].lower():
-                    self._launch(a)
-                    return f"Launched: {a['name']}"
+                    self._spawn_card(a)
+                    return f"Spawned card for: {a['name']}"
             return f"App not found: {target}"
         return f"Unknown: {name}"
 
@@ -798,6 +1000,1521 @@ class AppNode(BaseNodeWidget):
         self._apps = data.get("apps", [])
         if self._apps:
             self._scan()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# App Card Node — one card per launched app, with thumbnail and zoom states
+# ═══════════════════════════════════════════════════════════════════════
+
+class DisplayCardNode(BaseNodeWidget):
+    ZOOM_THUMB = 0.7
+    ZOOM_FULL = 1.6
+    THUMB_INTERVAL_MS = 1200
+    FRAME_INTERVAL_MS = 80
+    IDLE_FRAME_INTERVAL_MS = 250
+    DEFAULT_ASPECT = 4 / 3
+    MIN_VIEWPORT_HEIGHT = 140
+    MAX_VIEWPORT_HEIGHT = 720
+    BODY_CHROME_HEIGHT = 104
+
+    def __init__(self, title: str = "Display", color: QColor = QColor("#1a2330"),
+                 width: int = 280, provider: SurfaceProvider | None = None,
+                 surface_name: str | None = None, surface_kind: str = "display",
+                 icon_name: str = "", provider_spec: dict | None = None,
+                 source_spec: dict | None = None,
+                 node_title: str | None = None,
+                 auto_build: bool = True):
+        super().__init__(node_title or title, color, width)
+        if source_spec is not None and provider_spec is None:
+            provider_spec = source_spec
+        self._provider = provider
+        self._provider_started = bool(provider is not None and provider.is_running())
+        self._provider_spec: dict | None = None
+        self._provider_error: str = ""
+        self._surface_name = surface_name or title
+        self._surface_kind = surface_kind
+        self._surface_icon_name = icon_name
+        self._surface_aspect = self.DEFAULT_ASPECT
+        self._surface_context: dict = {}
+        self._node_title_override = node_title
+        self._last_surface_event: dict = {"event": "created", "type": "surface_event"}
+        self._zoom_mode: str = "thumb"
+        self._last_thumb: QPixmap | None = None
+        if provider is not None:
+            self._update_surface_aspect_from_dimensions(
+                getattr(provider, "_width", None),
+                getattr(provider, "_height", None),
+            )
+        if provider_spec is not None:
+            if self._provider is None:
+                self._attach_provider(provider_spec, launch=False)
+            else:
+                self._provider_spec = normalize_source_spec(provider_spec)
+                self._update_surface_aspect_from_spec(self._provider_spec)
+                self._apply_surface_identity(self._provider_spec)
+                context = self._provider_spec.get("context")
+                if isinstance(context, dict):
+                    self._surface_context.update(context)
+        if auto_build:
+            self._build_surface_ui()
+            self._add_surface_sockets()
+            self._tick()
+
+    def _build_surface_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        self._layout = QVBoxLayout(w)
+        self._layout.setContentsMargins(6, 6, 6, 6)
+        self._layout.setSpacing(4)
+
+        top = QHBoxLayout()
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(32, 32)
+        icon = _load_app_icon(self._surface_icon_name) if self._surface_icon_name else None
+        if icon:
+            self._icon_label.setPixmap(icon.pixmap(32, 32))
+        top.addWidget(self._icon_label)
+
+        self._title_label = QLabel(self._surface_name)
+        self._title_label.setStyleSheet("color: #d4d4d4; font-weight: bold; font-size: 12px; background: transparent;")
+        self._title_label.setWordWrap(True)
+        top.addWidget(self._title_label, 1)
+        self._source_badge = QLabel("")
+        self._source_badge.setStyleSheet(
+            "color: #9aa7b5; background: #111820; border: 1px solid #26313d; "
+            "border-radius: 6px; padding: 1px 6px; font-size: 9px;"
+        )
+        top.addWidget(self._source_badge)
+        self._layout.addLayout(top)
+
+        self._status = QLabel("Ready - attach or launch a display source")
+        self._status.setStyleSheet("color: #888; font-size: 10px; padding: 2px; background: transparent;")
+        self._status.setWordWrap(True)
+        self._layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        self._buttons = {}
+        for key, label, cb in [
+            ("launch", "Launch", self._launch),
+            ("focus", "Focus", self._focus),
+            ("hide", "Hide", self._minimize),
+            ("close", "Close", self._close),
+        ]:
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+                "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+                "QPushButton:hover { border-color: #ff7800; color: #ff7800; }"
+            )
+            btn.clicked.connect(cb)
+            self._buttons[key] = btn
+            btn_row.addWidget(btn)
+        self._layout.addLayout(btn_row)
+
+        self._thumb_label = QLabel()
+        self._thumb_label.setStyleSheet("background: #0d0e12; border: 1px solid #1e1e24; border-radius: 4px;")
+        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb_label.setMinimumHeight(120)
+        self._thumb_label.setWordWrap(True)
+        self._thumb_label.setText(self._placeholder_text())
+        self._thumb_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._thumb_label.setMouseTracking(True)
+        self._thumb_label.installEventFilter(self.widget)
+        self._layout.addWidget(self._thumb_label, 1)
+
+        w.setMinimumHeight(240)
+        self.set_body_widget(w)
+        self.widget.eventFilter = self._event_filter
+        self._sync_surface_chrome()
+        self._sync_surface_viewport_geometry()
+
+    def _add_surface_sockets(self):
+        existing = {s.label for s in self._sockets}
+        for label, dtype in [
+            ("control", "command"),
+            ("status", "data"),
+            ("input", "event"),
+            ("events", "event"),
+            ("context", "context"),
+            ("context-out", "context"),
+        ]:
+            if label not in existing:
+                self.add_socket(label, dtype)
+
+    def _source_kind(self) -> str:
+        spec = self._provider_spec or {}
+        return str(
+            spec.get("source_kind")
+            or spec.get("kind")
+            or spec.get("provider_kind")
+            or self._surface_kind
+            or "display"
+        )
+
+    def _source_label(self) -> str:
+        kind = self._source_kind().replace("_", "-")
+        labels = {
+            "local-app": "local app",
+            "xwayland-per-app": "xwayland",
+            "fauxpass-app": "fauxpass",
+            "fauxpass-local": "fauxpass",
+            "fauxpass-remote": "remote",
+            "display": "display",
+            "app": "app",
+        }
+        return labels.get(kind, kind)
+
+    def _placeholder_text(self, detail: str | None = None) -> str:
+        title = self._surface_name or "Display"
+        if self._provider is None:
+            return f"{title}\nPlug a source into this display"
+        if detail:
+            return f"{title}\n{detail}"
+        if self._provider_started:
+            return f"{title}\nWaiting for first frame..."
+        action = "Open" if self._surface_kind == "app" else "Launch"
+        return f"{title}\n{action} source to begin"
+
+    def _set_card_title(self, title: str | None):
+        if not title:
+            return
+        self._title = str(title)
+        try:
+            self.widget.update()
+        except Exception:
+            pass
+
+    def _sync_surface_chrome(self):
+        if hasattr(self, "_source_badge"):
+            label = self._source_label()
+            self._source_badge.setText(f" {label} ")
+            if self._surface_kind == "app" or self._source_kind() == "local-app":
+                self._source_badge.setStyleSheet(
+                    "color: #8fdcff; background: #0f1b24; border: 1px solid #1c5f7a; "
+                    "border-radius: 6px; padding: 1px 6px; font-size: 9px;"
+                )
+            else:
+                self._source_badge.setStyleSheet(
+                    "color: #9aa7b5; background: #111820; border: 1px solid #26313d; "
+                    "border-radius: 6px; padding: 1px 6px; font-size: 9px;"
+                )
+        if hasattr(self, "_buttons"):
+            launch = self._buttons.get("launch")
+            hide = self._buttons.get("hide")
+            if launch is not None:
+                launch.setText("Open" if self._surface_kind == "app" else "Launch")
+            if hide is not None:
+                hide.setText("Hide")
+        if hasattr(self, "_thumb_label") and self._last_thumb is None:
+            self._thumb_label.setText(self._placeholder_text())
+
+    def _status_text(self, running: bool) -> str:
+        if self._provider is None:
+            return f"Empty display | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
+        if running:
+            state = "Live"
+        elif self._provider_started:
+            state = "Stopped"
+        else:
+            state = "Ready"
+        return f"{state} | {self._source_label()} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
+
+    def _update_surface_aspect_from_dimensions(self, width, height):
+        try:
+            width = float(width)
+            height = float(height)
+            if width > 0 and height > 0:
+                aspect = width / height
+                if 0.25 <= aspect <= 5.0:
+                    self._surface_aspect = aspect
+        except (TypeError, ValueError):
+            pass
+
+    def _update_surface_aspect_from_spec(self, spec: dict):
+        if not isinstance(spec, dict):
+            return
+        aspect = spec.get("aspect")
+        try:
+            if aspect is not None:
+                aspect = float(aspect)
+                if 0.25 <= aspect <= 5.0:
+                    self._surface_aspect = aspect
+                    return
+        except (TypeError, ValueError):
+            pass
+        self._update_surface_aspect_from_dimensions(
+            spec.get("width", spec.get("w")),
+            spec.get("height", spec.get("h")),
+        )
+
+    def _surface_viewport_height(self) -> int:
+        body_w = max(80, int(self._base_node_width - self.BODY_PAD * 2))
+        height = int(body_w / max(0.25, self._surface_aspect))
+        return max(self.MIN_VIEWPORT_HEIGHT, min(self.MAX_VIEWPORT_HEIGHT, height))
+
+    def _sync_surface_viewport_geometry(self):
+        if not hasattr(self, "_thumb_label") or self._body_widget is None:
+            return
+        viewport_w = max(80, int(self._base_node_width - self.BODY_PAD * 4))
+        viewport_h = self._surface_viewport_height()
+        body_h = self.BODY_CHROME_HEIGHT + viewport_h
+        self._thumb_label.setMinimumWidth(viewport_w)
+        self._thumb_label.setMinimumHeight(viewport_h)
+        self._thumb_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._body_widget.setMinimumHeight(body_h)
+        self._body_widget.setFixedHeight(body_h)
+        layout = self._body_widget.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self._update_size()
+
+    def _surface_viewport_target_size(self) -> tuple[int, int]:
+        target_w = max(1, int(self._base_node_width - self.BODY_PAD * 4))
+        target_h = max(1, self._surface_viewport_height())
+        if not hasattr(self, "_thumb_label"):
+            return target_w, target_h
+        label_w = max(1, self._thumb_label.width())
+        label_h = max(1, self._thumb_label.height())
+        if label_w >= target_w * 0.8 and label_h >= target_h * 0.8:
+            return label_w, label_h
+        return target_w, target_h
+
+    def set_node_width(self, w: int):
+        w = max(self.MIN_WIDTH, w)
+        self._base_node_width = w
+        self._node_width = int(w * self._scale)
+        if self._body_widget:
+            bw = max(w - self.BODY_PAD * 2, 80)
+            self._body_widget.setFixedWidth(bw)
+        self._sync_surface_viewport_geometry()
+        canvas = self.widget.parentWidget()
+        pan = canvas._state.get("pan_offset", QPoint(0, 0)) if canvas and hasattr(canvas, "_state") else QPoint(0, 0)
+        self.refresh_layout(self._scale, pan)
+        self.widget.update()
+
+    def _apply_surface_identity(self, spec: dict):
+        name = (
+            spec.get("surface_name")
+            or spec.get("source_name")
+            or spec.get("name")
+            or spec.get("title")
+        )
+        kind = spec.get("surface_kind") or spec.get("display_kind")
+        icon = spec.get("icon") or spec.get("icon_name")
+        card_title = spec.get("card_title") or spec.get("node_title")
+        if name:
+            self._surface_name = str(name)
+            if hasattr(self, "_title_label"):
+                self._title_label.setText(self._surface_name)
+        if kind:
+            self._surface_kind = str(kind)
+        if card_title:
+            self._set_card_title(str(card_title))
+        elif self._node_title_override is None and self._surface_kind == "app" and name:
+            self._set_card_title(str(name))
+        if icon:
+            self._surface_icon_name = str(icon)
+            if hasattr(self, "_icon_label"):
+                loaded = _load_app_icon(self._surface_icon_name)
+                if loaded:
+                    self._icon_label.setPixmap(loaded.pixmap(32, 32))
+        self._sync_surface_chrome()
+
+    def _attach_provider(self, spec, launch: bool = False) -> bool:
+        try:
+            provider_spec = normalize_source_spec(spec)
+            if self._provider is not None:
+                self._provider.stop()
+            self._provider = create_source(provider_spec)
+            self._provider_started = False
+            self._provider_spec = provider_spec
+            self._provider_error = ""
+            self._update_surface_aspect_from_spec(provider_spec)
+            self._apply_surface_identity(provider_spec)
+            self._sync_surface_viewport_geometry()
+            context = provider_spec.get("context")
+            if isinstance(context, dict):
+                self._surface_context.update(context)
+            self._record_surface_event(
+                "source_attached",
+                source_kind=provider_spec.get("kind"),
+                provider_kind=provider_spec.get("kind"),
+            )
+            if launch:
+                self._launch()
+            return True
+        except Exception as e:
+            self._provider = None
+            self._provider_started = False
+            self._provider_spec = None
+            self._provider_error = str(e)
+            if hasattr(self, "_status"):
+                self._status.setText(f"Source attach failed: {e}")
+            self._record_surface_event("source_error", message=str(e))
+            return False
+
+    @staticmethod
+    def _provider_spec_from_payload(payload):
+        if not isinstance(payload, dict):
+            return None
+        for key in ("source_spec", "display_source", "provider_spec", "surface_provider"):
+            if key in payload:
+                return payload[key]
+        for key in ("source", "display", "provider"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return value
+        if any(key in payload for key in (
+            "kind", "source_kind", "provider_kind", "backend", "argv", "command", "exec"
+        )):
+            return payload
+        return None
+
+    _source_spec_from_payload = _provider_spec_from_payload
+
+    def _emit_socket(self, label: str, data: dict):
+        for socket in self._sockets:
+            if socket.label == label:
+                socket.push_data(data)
+
+    def _record_surface_event(self, event_name: str, **data):
+        payload = {
+            "event": event_name,
+            "type": "surface_event",
+            "display": self._surface_name,
+            "display_kind": self._surface_kind,
+            "surface": self._surface_name,
+            "surface_kind": self._surface_kind,
+            "zoom_mode": self._zoom_mode,
+        }
+        payload.update(data)
+        self._last_surface_event = payload
+        self._emit_socket("events", payload)
+
+    def _provider_dimensions(self) -> tuple[int, int]:
+        if self._provider is None or not hasattr(self, "_thumb_label"):
+            return 1, 1
+        return (
+            max(1, int(getattr(self._provider, "_width", self._thumb_label.width()))),
+            max(1, int(getattr(self._provider, "_height", self._thumb_label.height()))),
+        )
+
+    def _resize_provider_to_card(self) -> None:
+        if self._provider is None or not hasattr(self, "_thumb_label"):
+            return
+        try:
+            width, height = self._surface_viewport_target_size()
+            if (width, height) != self._provider_dimensions():
+                self._provider.resize(width, height)
+        except Exception:
+            pass
+
+    def _surface_status(self) -> dict:
+        provider_status = {}
+        provider_meta = {}
+        if self._provider is not None:
+            try:
+                provider_status = self._provider.status()
+            except Exception:
+                provider_status = {}
+            try:
+                provider_meta = self._provider.metadata()
+            except Exception:
+                provider_meta = {}
+        width, height = self._provider_dimensions()
+        status = {
+            "type": "surface_status",
+            "display": self._surface_name,
+            "display_kind": self._surface_kind,
+            "surface": self._surface_name,
+            "surface_kind": self._surface_kind,
+            "source": type(self._provider).__name__ if self._provider is not None else None,
+            "source_attached": self._provider is not None,
+            "source_started": self._provider_started,
+            "source_spec": dict(self._provider_spec) if self._provider_spec else None,
+            "source_error": self._provider_error,
+            "available_sources": source_descriptors(),
+            "provider": type(self._provider).__name__ if self._provider is not None else None,
+            "provider_attached": self._provider is not None,
+            "provider_started": self._provider_started,
+            "provider_spec": dict(self._provider_spec) if self._provider_spec else None,
+            "provider_error": self._provider_error,
+            "available_providers": provider_descriptors(),
+            "running": self._provider.is_running() if self._provider is not None else False,
+            "zoom_mode": self._zoom_mode,
+            "width": width,
+            "height": height,
+            "context": dict(self._surface_context),
+        }
+        status.update(provider_meta)
+        status.update(provider_status)
+        return status
+
+    def _push_surface_status(self):
+        self._emit_socket("status", self._surface_status())
+
+    def _canvas_scale(self) -> float:
+        parent = self.widget.parentWidget()
+        if parent and hasattr(parent, "_state"):
+            return parent._state.get("scale", 1.0)
+        return 1.0
+
+    def refresh_layout(self, scale: float, pan_offset: QPoint):
+        super().refresh_layout(scale, pan_offset)
+        self._resize_provider_to_card()
+
+    def _next_tick_interval(self) -> int:
+        if self._provider is not None and self._provider.is_running():
+            if self.isSelected() or self._zoom_mode in ("window", "fullscreen"):
+                return self.FRAME_INTERVAL_MS
+            return self.IDLE_FRAME_INTERVAL_MS
+        return self.THUMB_INTERVAL_MS
+
+    def _schedule_tick(self):
+        QTimer.singleShot(self._next_tick_interval(), self._tick)
+
+    def _map_to_provider(self, pos: QPoint) -> tuple[float, float]:
+        if self._provider is None:
+            return 0.0, 0.0
+        tw = max(1, self._thumb_label.width())
+        th = max(1, self._thumb_label.height())
+        pw, ph = self._provider_dimensions()
+        return pos.x() * pw / tw, pos.y() * ph / th
+
+    @staticmethod
+    def _qt_button_to_x11(button: Qt.MouseButton) -> int | None:
+        return {
+            Qt.MouseButton.LeftButton: 1,
+            Qt.MouseButton.MiddleButton: 2,
+            Qt.MouseButton.RightButton: 3,
+            Qt.MouseButton.BackButton: 8,
+            Qt.MouseButton.ForwardButton: 9,
+        }.get(button)
+
+    def _event_filter(self, watched, event):
+        if watched is not self._thumb_label or self._provider is None:
+            return False
+        if event.type() == QEvent.Type.Enter:
+            self._thumb_label.setFocus()
+            return False
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self._focus()
+            btn = self._qt_button_to_x11(event.button())
+            if btn is None:
+                return False
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="button_press", x=x, y=y, button=btn))
+            self._record_surface_event("pointer_button_press", x=x, y=y, button=btn)
+            return True
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            btn = self._qt_button_to_x11(event.button())
+            if btn is None:
+                return False
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="button_release", x=x, y=y, button=btn))
+            self._record_surface_event("pointer_button_release", x=x, y=y, button=btn)
+            return True
+        if event.type() == QEvent.Type.MouseMove:
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="pointer_move", x=x, y=y))
+            return True
+        if event.type() == QEvent.Type.Wheel:
+            x, y = self._map_to_provider(event.position().toPoint())
+            delta_y = event.angleDelta().y()
+            if delta_y != 0:
+                self._provider.send_input(InputEvent(type="axis", x=x, y=y, delta_y=delta_y))
+                self._record_surface_event("axis", x=x, y=y, delta_y=delta_y)
+            return True
+        if event.type() == QEvent.Type.KeyPress:
+            self._focus()
+            keycode = event.nativeScanCode()
+            if keycode > 0:
+                self._provider.send_input(InputEvent(type="key_press", key=keycode))
+                self._record_surface_event("key_press", key=keycode)
+            return True
+        if event.type() == QEvent.Type.KeyRelease:
+            keycode = event.nativeScanCode()
+            if keycode > 0:
+                self._provider.send_input(InputEvent(type="key_release", key=keycode))
+            return True
+        return False
+
+    def _tick(self):
+        if self._provider is not None:
+            self._resize_provider_to_card()
+            self._provider.poll()
+            frame = self._provider.get_frame()
+            if frame is not None:
+                data, w, h = frame
+                try:
+                    tw = max(1, self._thumb_label.width())
+                    th = max(1, self._thumb_label.height())
+                    scaled = _scale_rgba(data, w, h, tw, th)
+                    image = QImage(scaled, tw, th, tw * 4, QImage.Format.Format_RGBA8888).copy()
+                    pixmap = QPixmap.fromImage(image)
+                    self._last_thumb = pixmap
+                    self._thumb_label.setPixmap(pixmap)
+                except Exception:
+                    pass
+            elif self._last_thumb is None:
+                self._thumb_label.setText(self._placeholder_text())
+            if self.isSelected():
+                self._update_zoom_state(self._canvas_scale())
+            elif self._zoom_mode != "thumb":
+                self._apply_zoom_mode("thumb")
+            running = self._provider.is_running()
+            self._status.setText(self._status_text(running))
+        else:
+            self._status.setText(self._status_text(False))
+        self._schedule_tick()
+
+    def _update_zoom_state(self, scale: float):
+        if scale < self.ZOOM_THUMB:
+            target = "thumb"
+        elif scale < self.ZOOM_FULL:
+            target = "window"
+        else:
+            target = "fullscreen"
+        if target != self._zoom_mode:
+            self._apply_zoom_mode(target)
+
+    def _apply_zoom_mode(self, mode: str):
+        self._zoom_mode = mode
+        if self._provider is not None:
+            if mode == "thumb":
+                self._provider.minimize()
+            else:
+                self._focus()
+        self._record_surface_event("zoom_mode", mode=mode)
+
+    def _launch(self):
+        if self._provider is None or self._provider_started:
+            return
+        try:
+            if hasattr(self, "_status"):
+                action = "Opening" if self._surface_kind == "app" else "Launching"
+                self._status.setText(f"{action} {self._surface_name}...")
+            if hasattr(self, "_thumb_label") and self._last_thumb is None:
+                self._thumb_label.setText(self._placeholder_text("Starting source..."))
+            self._provider.start()
+            self._provider_started = True
+            self._resize_provider_to_card()
+            self._focus()
+            self._record_surface_event("started")
+        except Exception as e:
+            self._status.setText(f"Launch failed: {e}")
+            self._record_surface_event("error", message=str(e))
+
+    def _focus(self):
+        if self._provider is None:
+            return
+        self._thumb_label.setFocus()
+        self._provider.focus()
+        self._record_surface_event("focused")
+
+    def _minimize(self):
+        if self._provider is None:
+            return
+        self._provider.minimize()
+        if hasattr(self, "_status"):
+            self._status.setText(f"Hidden | {self._source_label()} | zoom={self._canvas_scale():.2f}")
+        self._record_surface_event("minimized")
+
+    def _close(self):
+        if self._provider is None:
+            return
+        self._provider.close()
+        self._provider_started = False
+        self._last_thumb = None
+        if hasattr(self, "_thumb_label"):
+            self._thumb_label.clear()
+            self._thumb_label.setText(self._placeholder_text("Source closed"))
+        if hasattr(self, "_status"):
+            self._status.setText(self._status_text(False))
+        self._record_surface_event("closed")
+
+    def _handle_surface_control(self, data):
+        if isinstance(data, str):
+            action = data.strip().lower()
+            payload = {}
+        elif isinstance(data, dict):
+            payload = data
+            action = str(
+                data.get("action")
+                or data.get("command")
+                or data.get("control")
+                or ""
+            ).strip().lower()
+            if not action and self._provider_spec_from_payload(payload) is not None:
+                action = "attach"
+        else:
+            return
+        if action in (
+            "attach", "attach-source", "attach_source", "set-source", "set_source",
+            "attach-provider", "attach_provider", "set-provider", "set_provider",
+        ):
+            spec = self._provider_spec_from_payload(payload)
+            if spec is not None:
+                self._attach_provider(spec, launch=bool(payload.get("launch", False)))
+        elif action in ("launch", "start", "open"):
+            spec = self._provider_spec_from_payload(payload)
+            if spec is not None:
+                self._attach_provider(spec, launch=True)
+            else:
+                self._launch()
+        elif action == "focus":
+            self._focus()
+        elif action in ("minimize", "hide"):
+            self._minimize()
+        elif action in ("close", "stop"):
+            self._close()
+        elif action in ("detach", "detach-source", "detach_source", "detach-provider", "detach_provider"):
+            if self._provider is not None:
+                self._provider.stop()
+            self._provider = None
+            self._provider_started = False
+            self._provider_spec = None
+            self._provider_error = ""
+            self._record_surface_event("source_detached")
+        elif action in ("sources", "list-sources", "list_sources", "providers", "list-providers", "list_providers"):
+            self._record_surface_event(
+                "sources",
+                sources=source_descriptors(),
+                providers=provider_descriptors(),
+            )
+        elif action in ("thumb", "thumbnail"):
+            self._apply_zoom_mode("thumb")
+        elif action in ("window", "card"):
+            self._apply_zoom_mode("window")
+        elif action == "fullscreen":
+            self._apply_zoom_mode("fullscreen")
+        elif action == "resize" and self._provider is not None:
+            width = int(payload.get("width", payload.get("w", self._provider_dimensions()[0])))
+            height = int(payload.get("height", payload.get("h", self._provider_dimensions()[1])))
+            self._provider.resize(max(1, width), max(1, height))
+            self._record_surface_event("resized", width=width, height=height)
+        elif action in ("set-title", "set_title"):
+            title = str(payload.get("title", self._surface_name))
+            self._surface_name = title
+            if hasattr(self, "_title_label"):
+                self._title_label.setText(title)
+            self._record_surface_event("title_changed", title=title)
+        if payload.get("context") and isinstance(payload["context"], dict):
+            self._surface_context.update(payload["context"])
+        self._push_surface_status()
+
+    def _handle_surface_input(self, data):
+        if self._provider is None:
+            return
+        events = data.get("events") if isinstance(data, dict) else None
+        if events is None:
+            events = [data]
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            event_type = item.get("type") or item.get("event")
+            if not event_type:
+                continue
+            self._provider.send_input(InputEvent(
+                type=str(event_type),
+                x=float(item.get("x", 0.0)),
+                y=float(item.get("y", 0.0)),
+                button=item.get("button"),
+                key=item.get("key"),
+                modifiers=int(item.get("modifiers", 0)),
+                delta_x=float(item.get("delta_x", 0.0)),
+                delta_y=float(item.get("delta_y", 0.0)),
+            ))
+        self._record_surface_event("input_received")
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label == "control":
+            self._handle_surface_control(data)
+        elif socket.label == "input":
+            self._handle_surface_input(data)
+        elif socket.label == "context" and isinstance(data, dict):
+            self._surface_context.update(data)
+            self._record_surface_event("context_updated")
+            self._push_surface_status()
+
+    def output_data(self, socket: SocketItem) -> dict:
+        if socket.label == "status":
+            return self._surface_status()
+        if socket.label == "events":
+            return self._last_surface_event
+        if socket.label in ("context-out", "context"):
+            return {
+                "type": "display_context",
+                "display": self._surface_name,
+                "display_kind": self._surface_kind,
+                "surface": self._surface_name,
+                "surface_kind": self._surface_kind,
+                "context": dict(self._surface_context),
+                "status": self._surface_status(),
+            }
+        return {}
+
+    def cleanup(self):
+        if self._provider is not None:
+            self._provider.stop()
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["surface_name"] = self._surface_name
+        d["surface_kind"] = self._surface_kind
+        d["surface_context"] = self._surface_context
+        d["source_spec"] = self._provider_spec
+        d["provider_spec"] = self._provider_spec
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._surface_name = data.get("surface_name", self._surface_name)
+        self._surface_kind = data.get("surface_kind", self._surface_kind)
+        self._surface_context = data.get("surface_context", {})
+        provider_spec = data.get("source_spec", data.get("provider_spec"))
+        if provider_spec is not None and self._provider is None:
+            self._attach_provider(provider_spec, launch=False)
+        if hasattr(self, "_title_label"):
+            self._title_label.setText(self._surface_name)
+
+
+SurfaceCardNode = DisplayCardNode
+
+
+@register_node_type("Surface", "Compatibility alias for Display cards")
+@register_node_type("Display", "Monitor-style card - plug in any app, VM, remote, or stream source")
+class GenericSurfaceCardNode(DisplayCardNode):
+    def __init__(self, provider: SurfaceProvider | None = None, provider_spec: dict | None = None,
+                 source_spec: dict | None = None,
+                 surface_name: str = "Display", surface_kind: str = "display",
+                 width: int = 320, node_title: str | None = None):
+        super().__init__(
+            node_title or "Display",
+            QColor("#1a2330"),
+            width,
+            provider=provider,
+            provider_spec=provider_spec,
+            source_spec=source_spec,
+            surface_name=surface_name,
+            surface_kind=surface_kind,
+            node_title=node_title,
+        )
+
+
+DisplayNode = GenericSurfaceCardNode
+
+
+@register_node_type("App", "Compatibility app card; Apps launcher now prefers Display cards with local-app sources")
+class AppCardNode(SurfaceCardNode):
+    ZOOM_THUMB = 0.7
+    ZOOM_FULL = 1.6
+    THUMB_INTERVAL_MS = 1200
+
+    def __init__(self, app: dict | None = None, provider: SurfaceProvider | None = None,
+                 provider_spec: dict | None = None):
+        app = app or {}
+        self._app_name = app.get("name", "App")
+        self._app_exec = app.get("exec", "")
+        self._app_icon_name = app.get("icon", "")
+        self._startup_wm = app.get("startup_wm", "")
+        self._x11_env: dict[str, str] = app.get("env", {})
+        self._x11_args: list[str] = app.get("args", [])
+        super().__init__(
+            "App", QColor("#1a2330"), 280,
+            provider=provider,
+            provider_spec=provider_spec,
+            surface_name=self._app_name,
+            surface_kind="app",
+            icon_name=self._app_icon_name,
+            auto_build=False,
+        )
+        self._wm = get_window_manager()
+        self._surface_context.update({
+            "app": self._app_name,
+            "exec": self._app_exec,
+            "startup_wm": self._startup_wm,
+        })
+        self._app_id_hints: set[str] = set()
+        if self._startup_wm:
+            self._app_id_hints.add(self._startup_wm)
+        if self._app_name:
+            self._app_id_hints.add(self._app_name)
+        # Derive an app-id hint from the exec command basename.
+        if self._app_exec:
+            base = self._app_exec.split()[0].split("/")[-1]
+            if base:
+                self._app_id_hints.add(base)
+        self._process: subprocess.Popen | None = None
+        self._pid: int | None = None
+        self._window_info: dict | None = None
+        self._build_ui()
+        self._add_surface_sockets()
+        self._tick()
+
+    def refresh_layout(self, scale: float, pan_offset: QPoint):
+        super().refresh_layout(scale, pan_offset)
+        if self._provider is not None and hasattr(self, "_thumb_label"):
+            self._resize_provider_to_card()
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        self._layout = QVBoxLayout(w)
+        self._layout.setContentsMargins(6, 6, 6, 6)
+        self._layout.setSpacing(4)
+
+        top = QHBoxLayout()
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(32, 32)
+        icon = _load_app_icon(self._app_icon_name) if self._app_icon_name else None
+        if icon:
+            self._icon_label.setPixmap(icon.pixmap(32, 32))
+        top.addWidget(self._icon_label)
+
+        self._title_label = QLabel(self._app_name)
+        self._title_label.setStyleSheet("color: #d4d4d4; font-weight: bold; font-size: 12px; background: transparent;")
+        self._title_label.setWordWrap(True)
+        top.addWidget(self._title_label, 1)
+        self._layout.addLayout(top)
+
+        self._status = QLabel("Ready — click Launch")
+        self._status.setStyleSheet("color: #888; font-size: 10px; padding: 2px; background: transparent;")
+        self._status.setWordWrap(True)
+        self._layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        for label, cb in [
+            ("Launch", self._launch),
+            ("Focus", self._focus),
+            ("Min", self._minimize),
+            ("Close", self._close),
+        ]:
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+                "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+                "QPushButton:hover { border-color: #ff7800; color: #ff7800; }"
+            )
+            btn.clicked.connect(cb)
+            btn_row.addWidget(btn)
+        self._layout.addLayout(btn_row)
+
+        self._thumb_label = QLabel()
+        self._thumb_label.setStyleSheet("background: #0d0e12; border: 1px solid #1e1e24; border-radius: 4px;")
+        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb_label.setMinimumHeight(120)
+        self._thumb_label.setWordWrap(True)
+        self._thumb_label.setText("Thumbnail will appear when the app window is visible")
+        self._thumb_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._thumb_label.setMouseTracking(True)
+        self._thumb_label.installEventFilter(self.widget)
+        self._layout.addWidget(self._thumb_label, 1)
+
+        w.setMinimumHeight(240)
+        self.set_body_widget(w)
+        self.widget.eventFilter = self._event_filter
+        self._sync_surface_viewport_geometry()
+
+    def _find_window(self) -> dict | None:
+        # If we already know the window, verify it still exists on X11.
+        if self._window_info:
+            cached_app_id = self._window_info.get("app_id", "")
+            cached_title = self._window_info.get("title", "")
+            geom = find_window_geometry(app_id=cached_app_id, title=cached_title)
+            if geom:
+                return {**geom, "app_id": cached_app_id, "title": cached_title}
+        # Prefer PID match if we launched the process.
+        if self._pid:
+            info = find_window_for_pid(self._pid)
+            if info:
+                return info
+        # Fall back to app-id/title matching.
+        for app_id in self._app_id_hints:
+            for win in self._wm.list_windows():
+                if app_id.lower() in win.app_id.lower() or app_id.lower() in win.title.lower():
+                    geom = find_window_geometry(app_id=win.app_id, title=win.title)
+                    if geom:
+                        return {**geom, "app_id": win.app_id, "title": win.title}
+        return None
+
+    def _canvas_scale(self) -> float:
+        parent = self.widget.parentWidget()
+        if parent and hasattr(parent, "_state"):
+            return parent._state.get("scale", 1.0)
+        return 1.0
+
+    def _card_screen_geometry(self) -> tuple[int, int, int, int] | None:
+        if not self.widget.parentWidget():
+            return None
+        pos = self.widget.mapToGlobal(QPoint(0, 0))
+        return pos.x(), pos.y(), self.widget.width(), self.widget.height()
+
+    def _surface_status(self) -> dict:
+        status = super()._surface_status()
+        status.update({
+            "surface": self._app_name,
+            "surface_kind": "app",
+            "app": self._app_name,
+            "exec": self._app_exec,
+            "startup_wm": self._startup_wm,
+            "window_info": self._window_info,
+        })
+        if self._provider is None:
+            process_running = self._process is not None and self._process.poll() is None
+            status.update({
+                "provider": "native-window-fallback",
+                "running": bool(self._window_info or process_running),
+            })
+        return status
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Input forwarding for surface-provider cards
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _provider_dimensions(self) -> tuple[int, int]:
+        if self._provider is None:
+            return 1, 1
+        return (
+            max(1, int(getattr(self._provider, "_width", self._thumb_label.width()))),
+            max(1, int(getattr(self._provider, "_height", self._thumb_label.height()))),
+        )
+
+    def _resize_provider_to_card(self) -> None:
+        if self._provider is None:
+            return
+        try:
+            width, height = self._surface_viewport_target_size()
+            if (width, height) != self._provider_dimensions():
+                self._provider.resize(width, height)
+        except Exception:
+            pass
+
+    def _map_to_provider(self, pos: QPoint) -> tuple[float, float]:
+        """Map a point inside the thumbnail label to provider framebuffer coords."""
+        if self._provider is None:
+            return 0.0, 0.0
+        tw = max(1, self._thumb_label.width())
+        th = max(1, self._thumb_label.height())
+        pw, ph = self._provider_dimensions()
+        px = pos.x() * pw / tw
+        py = pos.y() * ph / th
+        return px, py
+
+    @staticmethod
+    def _qt_button_to_x11(button: Qt.MouseButton) -> int | None:
+        return {
+            Qt.MouseButton.LeftButton: 1,
+            Qt.MouseButton.MiddleButton: 2,
+            Qt.MouseButton.RightButton: 3,
+            Qt.MouseButton.BackButton: 8,
+            Qt.MouseButton.ForwardButton: 9,
+        }.get(button)
+
+    def _event_filter(self, watched, event):
+        """Filter thumb-label events when a Display source is active."""
+        if watched is not self._thumb_label or self._provider is None:
+            return False
+
+        if event.type() == QEvent.Type.Enter:
+            self._thumb_label.setFocus()
+            return False
+
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self._focus()
+            btn = self._qt_button_to_x11(event.button())
+            if btn is None:
+                return False
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="button_press", x=x, y=y, button=btn))
+            return True
+
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            btn = self._qt_button_to_x11(event.button())
+            if btn is None:
+                return False
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="button_release", x=x, y=y, button=btn))
+            return True
+
+        if event.type() == QEvent.Type.MouseMove:
+            x, y = self._map_to_provider(event.pos())
+            self._provider.send_input(InputEvent(type="pointer_move", x=x, y=y))
+            return True
+
+        if event.type() == QEvent.Type.Wheel:
+            x, y = self._map_to_provider(event.position().toPoint())
+            delta_y = event.angleDelta().y()
+            if delta_y != 0:
+                self._provider.send_input(InputEvent(type="axis", x=x, y=y, delta_y=delta_y))
+            return True
+
+        if event.type() == QEvent.Type.KeyPress:
+            self._focus()
+            keycode = event.nativeScanCode()
+            if keycode > 0:
+                self._provider.send_input(InputEvent(type="key_press", key=keycode))
+            return True
+
+        if event.type() == QEvent.Type.KeyRelease:
+            keycode = event.nativeScanCode()
+            if keycode > 0:
+                self._provider.send_input(InputEvent(type="key_release", key=keycode))
+            return True
+
+        return False
+
+    def _tick(self):
+        if self._provider is not None:
+            self._resize_provider_to_card()
+            self._provider.poll()
+            frame = self._provider.get_frame()
+            if frame is not None:
+                data, w, h = frame
+                try:
+                    tw = max(1, self._thumb_label.width())
+                    th = max(1, self._thumb_label.height())
+                    scaled = _scale_rgba(data, w, h, tw, th)
+                    image = QImage(scaled, tw, th, tw * 4, QImage.Format.Format_RGBA8888).copy()
+                    pixmap = QPixmap.fromImage(image)
+                    self._last_thumb = pixmap
+                    self._thumb_label.setPixmap(pixmap)
+                except Exception:
+                    pass
+            if self.isSelected():
+                self._update_zoom_state(self._canvas_scale())
+            elif self._zoom_mode != "thumb":
+                self._apply_zoom_mode("thumb")
+            running = self._provider.is_running()
+            self._status.setText(
+                f"{'Live' if running else 'Stopped'} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
+            )
+            self._schedule_tick()
+            return
+
+        self._window_info = self._find_window()
+        if self._window_info:
+            self._title_label.setText(self._window_info.get("title") or self._app_name)
+            self._capture_thumb()
+            if self.isSelected():
+                self._update_zoom_state(self._canvas_scale())
+            else:
+                if self._zoom_mode != "thumb":
+                    self._apply_zoom_mode("thumb")
+            self._status.setText(
+                f"{self._window_info.get('app_id', 'app')} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
+            )
+        else:
+            self._title_label.setText(self._app_name)
+            self._status.setText(f"Not running | zoom={self._canvas_scale():.2f} | {self._zoom_mode}")
+
+        self._schedule_tick()
+
+    def _capture_thumb(self):
+        result = None
+        if self._pid and self._window_info:
+            result = capture_thumbnail_for_pid(self._pid, max_size=260)
+        if result is None and self._window_info:
+            result = capture_thumbnail(
+                app_id=self._window_info.get("app_id"),
+                title=self._window_info.get("title"),
+                max_size=260,
+            )
+        if result is None:
+            return
+        data, w, h = result
+        try:
+            tw = max(1, self._thumb_label.width())
+            th = max(1, self._thumb_label.height())
+            scaled = _scale_rgba(data, w, h, tw, th)
+            image = QImage(scaled, tw, th, tw * 4, QImage.Format.Format_RGBA8888).copy()
+            pixmap = QPixmap.fromImage(image)
+            self._last_thumb = pixmap
+            self._thumb_label.setPixmap(pixmap)
+        except Exception:
+            pass
+
+    def _update_zoom_state(self, scale: float):
+        if scale < self.ZOOM_THUMB:
+            target = "thumb"
+        elif scale < self.ZOOM_FULL:
+            target = "window"
+        else:
+            target = "fullscreen"
+        if target != self._zoom_mode:
+            self._apply_zoom_mode(target)
+
+    def _apply_zoom_mode(self, mode: str):
+        self._zoom_mode = mode
+        if self._provider is not None:
+            if mode == "thumb":
+                self._provider.minimize()
+            else:
+                self._focus()
+            self._record_surface_event("zoom_mode", mode=mode)
+            return
+        if not self._window_info:
+            return
+        title = self._window_info.get("title", "")
+        app_id = self._window_info.get("app_id", "")
+        if mode == "thumb":
+            self._wm.minimize(title)
+        elif mode == "window":
+            self._wm.focus(title)
+            geom = self._card_screen_geometry()
+            if geom:
+                x, y, cw, ch = geom
+                nw = max(cw, 900)
+                nh = max(ch, 600)
+                x = max(0, x - (nw - cw) // 2)
+                y = max(0, y - (nh - ch) // 2)
+                move_resize_window(app_id=app_id, title=title, x=x, y=y, width=nw, height=nh)
+            raise_window(app_id=app_id, title=title)
+        elif mode == "fullscreen":
+            self._wm.fullscreen(title)
+        self._record_surface_event("zoom_mode", mode=mode)
+
+    def _launch(self):
+        if self._provider is not None:
+            if self._provider_started:
+                return
+            try:
+                self._provider.start()
+                self._provider_started = True
+                self._resize_provider_to_card()
+                self._focus()
+                self._status.setText("Launching...")
+                self._record_surface_event("started")
+            except Exception as e:
+                self._status.setText(f"Launch failed: {e}")
+                self._record_surface_event("error", message=str(e))
+            return
+
+        if self._process and self._process.poll() is None:
+            self._focus()
+            return
+        if self._window_info:
+            self._focus()
+            return
+        try:
+            import shlex, os
+            env = os.environ.copy()
+            for k, v in self._x11_env.items():
+                env[k] = v
+            cmd = shlex.split(self._app_exec) + self._x11_args
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+            self._pid = self._process.pid
+            self._status.setText("Launching...")
+            self._record_surface_event("started", pid=self._pid)
+        except Exception as e:
+            self._status.setText(f"Launch failed: {e}")
+            self._record_surface_event("error", message=str(e))
+
+    def _focus(self):
+        if self._provider is not None:
+            self._thumb_label.setFocus()
+            self._provider.focus()
+            self._record_surface_event("focused")
+            return
+        if self._window_info:
+            self._wm.focus(self._window_info.get("title", ""))
+            self._record_surface_event("focused", title=self._window_info.get("title", ""))
+
+    def _minimize(self):
+        if self._provider is not None:
+            self._provider.minimize()
+            self._record_surface_event("minimized")
+            return
+        if self._window_info:
+            self._wm.minimize(self._window_info.get("title", ""))
+            self._record_surface_event("minimized", title=self._window_info.get("title", ""))
+
+    def _close(self):
+        if self._provider is not None:
+            self._provider.close()
+            self._provider_started = False
+            self._record_surface_event("closed")
+            return
+        if self._window_info:
+            self._wm.close(self._window_info.get("title", ""))
+            self._window_info = None
+            self._record_surface_event("closed")
+        elif self._process and self._process.poll() is None:
+            self._process.terminate()
+            self._record_surface_event("closed")
+
+    def cleanup(self):
+        if self._provider is not None:
+            self._provider.stop()
+            return
+        if self._window_info:
+            self._wm.minimize(self._window_info.get("title", ""))
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["app_name"] = self._app_name
+        d["app_exec"] = self._app_exec
+        d["app_icon"] = self._app_icon_name
+        d["startup_wm"] = self._startup_wm
+        d["env"] = self._x11_env
+        d["args"] = self._x11_args
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._app_name = data.get("app_name", self._app_name)
+        self._app_exec = data.get("app_exec", self._app_exec)
+        self._app_icon_name = data.get("app_icon", self._app_icon_name)
+        self._startup_wm = data.get("startup_wm", self._startup_wm)
+        self._x11_env = data.get("env", {})
+        self._x11_args = data.get("args", [])
+        self._surface_name = self._app_name
+        self._surface_kind = "app"
+        self._surface_context.update({
+            "app": self._app_name,
+            "exec": self._app_exec,
+            "startup_wm": self._startup_wm,
+        })
+        self._title_label.setText(self._app_name)
+        icon = _load_app_icon(self._app_icon_name) if self._app_icon_name else None
+        if icon:
+            self._icon_label.setPixmap(icon.pixmap(32, 32))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Fauxpass Sources Node — bridge faux-pass app sources into Display cards
+# ═══════════════════════════════════════════════════════════════════════
+
+@register_node_type("Fauxpass", "List faux-pass local/remote app sources and spawn Display cards")
+class FauxPassSourcesNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Fauxpass", QColor("#182230"), 340)
+        self._sources: list[dict] = []
+        self._last_error = ""
+        self._build_ui()
+        self.add_socket("control", "command")
+        self.add_socket("out", "data")
+        QTimer.singleShot(200, self._refresh)
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._status = QLabel("Scanning faux-pass sources...")
+        self._status.setStyleSheet("color: #888; font-size: 10px; padding: 2px; background: transparent;")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        self._list = QWidget()
+        self._list_layout = QVBoxLayout(self._list)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(4)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self._list)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setMaximumHeight(240)
+        layout.addWidget(scroll)
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #00c8ff; border: 1px solid #00c8ff; "
+            "border-radius: 4px; padding: 3px 10px; font-size: 11px; }"
+            "QPushButton:hover { background: #00c8ff; color: #080909; }"
+        )
+        refresh_btn.clicked.connect(self._refresh)
+        layout.addWidget(refresh_btn)
+
+        w.setMinimumHeight(300)
+        self.set_body_widget(w)
+
+    def _run_faux_pass(self, *args: str) -> dict:
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["faux-pass", "--json", *args],
+                check=False,
+                timeout=8,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout:
+                payload = json.loads(result.stdout)
+            else:
+                payload = {}
+            if result.returncode != 0 and "ok" not in payload:
+                payload = {"ok": False, "error": result.stderr.strip() or "faux-pass failed"}
+            return payload
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _refresh(self):
+        payload = self._run_faux_pass("apps")
+        if not payload.get("ok"):
+            self._sources = []
+            self._last_error = str(payload.get("error", "faux-pass unavailable"))
+            self._status.setText(self._last_error)
+            self._render_sources()
+            return
+        apps = payload.get("apps", [])
+        self._sources = [app for app in apps if isinstance(app, dict)]
+        self._last_error = ""
+        remote_count = sum(1 for app in self._sources if app.get("remote"))
+        self._status.setText(f"{len(self._sources)} source(s) | {remote_count} remote")
+        self._render_sources()
+        self._push_sources()
+
+    def _render_sources(self):
+        while self._list_layout.count():
+            item = self._list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._sources:
+            empty = QLabel(self._last_error or "No faux-pass sources found")
+            empty.setStyleSheet("color: #777; font-size: 11px; background: transparent;")
+            empty.setWordWrap(True)
+            self._list_layout.addWidget(empty)
+            self._list_layout.addStretch()
+            return
+
+        for source in self._sources:
+            provider = source.get("provider_name") or source.get("provider") or "provider"
+            badge = "remote" if source.get("remote") else "local"
+            launchable = "launchable" if source.get("launchable") else "planned"
+            label = f"{source.get('name', source.get('id', 'app'))}  ·  {provider}  ·  {badge}/{launchable}"
+            btn = QPushButton(label)
+            btn.setToolTip(json.dumps(self._provider_spec(source), sort_keys=True))
+            btn.setStyleSheet(
+                "QPushButton { background: #141518; color: #d4d4d4; border: 1px solid #1e1e24; "
+                "border-radius: 5px; padding: 5px 8px; font-size: 10px; text-align: left; }"
+                "QPushButton:hover { color: #00c8ff; border-color: #00c8ff; background: #16202a; }"
+            )
+            btn.clicked.connect(lambda checked, app=source: self._spawn_display(app))
+            self._list_layout.addWidget(btn)
+        self._list_layout.addStretch()
+
+    def _provider_spec(self, source: dict) -> dict:
+        name = str(source.get("name") or source.get("id") or "Fauxpass App")
+        provider_id = str(source.get("provider") or "")
+        return {
+            "kind": "fauxpass-app",
+            "app": str(source.get("id") or name),
+            "provider_id": provider_id,
+            "width": 800,
+            "height": 600,
+            "surface_name": name,
+            "surface_kind": "fauxpass-remote" if source.get("remote") else "fauxpass-local",
+            "source_name": name,
+            "source_kind": "fauxpass-app",
+            "context": {
+                "source": "faux-pass",
+                "provider": provider_id,
+                "provider_name": source.get("provider_name", ""),
+                "remote": bool(source.get("remote")),
+                "launchable": bool(source.get("launchable")),
+            },
+        }
+
+    def _push_sources(self):
+        for socket in self._sockets:
+            if socket.label == "out":
+                socket.push_data(self.output_data(socket))
+
+    def _find_canvas(self):
+        w = self.widget
+        while w:
+            if hasattr(w, "_state") and "nodes" in w._state:
+                return w
+            w = w.parentWidget()
+        return None
+
+    def _spawn_display(self, source: dict):
+        canvas = self._find_canvas()
+        spec = self._provider_spec(source)
+        if canvas is None:
+            self._push_sources()
+            return
+        offset = 30 + (len(canvas._state.get("nodes", [])) % 8) * 30
+        card = GenericSurfaceCardNode(
+            source_spec=spec,
+            surface_name=spec["surface_name"],
+            surface_kind=spec["surface_kind"],
+        )
+        card.set_logical_pos(self._logical_x + offset, self._logical_y + offset)
+        canvas._add_node(card)
+        if canvas._state.get("selected_node"):
+            canvas._state["selected_node"].deselect()
+        canvas._state["selected_node"] = card
+        card.select()
+        canvas.update()
+        card._launch()
+        for socket in self._sockets:
+            if socket.label == "out":
+                socket.push_data({
+                    "type": "fauxpass_source",
+                    "action": "spawned_display",
+                    "source": source,
+                    "source_spec": spec,
+                    "provider_spec": spec,
+                })
+
+    def on_data_received(self, socket: SocketItem, data):
+        if socket.label != "control":
+            return
+        if isinstance(data, str):
+            action = data.strip().lower()
+            if action == "refresh":
+                self._refresh()
+            else:
+                self._launch_named(action)
+        elif isinstance(data, dict):
+            action = str(data.get("action") or data.get("command") or "").strip().lower()
+            if action == "refresh":
+                self._refresh()
+            elif action in ("launch", "open", "spawn"):
+                self._launch_named(str(data.get("app") or data.get("id") or data.get("name") or ""))
+
+    def _launch_named(self, query: str):
+        wanted = query.strip().lower()
+        if not wanted:
+            return
+        for source in self._sources:
+            names = [str(source.get("id", "")), str(source.get("name", ""))]
+            if any(wanted == name.lower() or wanted in name.lower() for name in names):
+                self._spawn_display(source)
+                return
+
+    def output_data(self, socket: SocketItem) -> dict:
+        return {
+            "type": "fauxpass_sources",
+            "sources": self._sources,
+            "source_specs": [self._provider_spec(source) for source in self._sources],
+            "provider_specs": [self._provider_spec(source) for source in self._sources],
+            "error": self._last_error,
+        }
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["sources"] = self._sources
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        self._sources = data.get("sources", [])
+        self._render_sources()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3340,3 +5057,395 @@ class AppWindowNode(BaseNodeWidget):
         cmd = data.get("app_command", "")
         if cmd:
             self._cmd_input.setText(cmd)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Window Card Node — manage real compositor windows as canvas cards
+# ═══════════════════════════════════════════════════════════════════════
+
+from ..window_manager import get_window_manager, ToplevelWindow
+
+
+@register_node_type("Window", "Card representing a real app window — focus, minimize, close from the canvas")
+class WindowCardNode(BaseNodeWidget):
+    def __init__(self):
+        super().__init__("Window", QColor("#1a2330"), 320)
+        self._wm = get_window_manager()
+        self._windows: list[ToplevelWindow] = []
+        self._selected_title: str = ""
+        self._build_ui()
+        self.add_socket("out", "signal")
+        self._tick()
+
+    def refresh_layout(self, scale: float, pan_offset: QPoint):
+        super().refresh_layout(scale, pan_offset)
+        provider = getattr(self, "_provider", None)
+        if provider is not None and self._body_widget is not None:
+            provider.resize(self._body_widget.width(), self._body_widget.height())
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._combo = QComboBox()
+        self._combo.setStyleSheet(
+            "QComboBox { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 2px 6px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: #141518; color: #d4d4d4; "
+            "selection-background-color: #ff7800; }"
+        )
+        self._combo.currentTextChanged.connect(self._on_select)
+        layout.addWidget(self._combo)
+
+        self._status = QLabel("Scanning windows...")
+        self._status.setStyleSheet("color: #888; font-size: 10px; padding: 2px; background: transparent;")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        for label, cb in [
+            ("Focus", self._focus),
+            ("Min", self._minimize),
+            ("Max", self._maximize),
+            ("Close", self._close),
+        ]:
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+                "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+                "QPushButton:hover { border-color: #ff7800; color: #ff7800; }"
+            )
+            btn.clicked.connect(cb)
+            btn_row.addWidget(btn)
+        layout.addLayout(btn_row)
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #1c1e23; color: #888; border: 1px solid #2a2d33; "
+            "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #00c8ff; color: #00c8ff; }"
+        )
+        refresh_btn.clicked.connect(self._refresh)
+        layout.addWidget(refresh_btn)
+
+        w.setMinimumHeight(140)
+        self.set_body_widget(w)
+
+    def _refresh(self):
+        self._windows = self._wm.list_windows()
+        current = self._combo.currentText()
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        titles = [f"{win.app_id}: {win.title}" for win in self._windows]
+        self._combo.addItems(["(select a window)"] + titles)
+        if current in titles:
+            self._combo.setCurrentText(current)
+        elif self._selected_title:
+            for t in titles:
+                if self._selected_title in t:
+                    self._combo.setCurrentText(t)
+                    break
+        self._combo.blockSignals(False)
+        self._status.setText(f"{len(self._windows)} window(s) found")
+
+    def _on_select(self, text: str):
+        if text.startswith("(select"):
+            self._selected_title = ""
+            return
+        # Extract title after "app_id: "
+        if ": " in text:
+            self._selected_title = text.split(": ", 1)[1]
+        else:
+            self._selected_title = text
+
+    def _current_title(self) -> str:
+        return self._selected_title
+
+    def _focus(self):
+        title = self._current_title()
+        if title and self._wm.focus(title):
+            self._status.setText(f"Focused: {title}")
+        else:
+            self._status.setText("Focus failed")
+
+    def _minimize(self):
+        title = self._current_title()
+        if title and self._wm.minimize(title):
+            self._status.setText(f"Minimized: {title}")
+        else:
+            self._status.setText("Minimize failed")
+
+    def _maximize(self):
+        title = self._current_title()
+        if title and self._wm.maximize(title):
+            self._status.setText(f"Maximized: {title}")
+        else:
+            self._status.setText("Maximize failed")
+
+    def _close(self):
+        title = self._current_title()
+        if title and self._wm.close(title):
+            self._status.setText(f"Closed: {title}")
+            self._refresh()
+        else:
+            self._status.setText("Close failed")
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        d["selected_title"] = self._selected_title
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
+        title = data.get("selected_title", "")
+        if title:
+            self._selected_title = title
+            self._refresh()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Chromium Card Node — dedicated card for the Chromium browser window
+# ═══════════════════════════════════════════════════════════════════════
+
+import subprocess
+
+
+@register_node_type("Chromium", "Dedicated card for the Chromium browser window")
+class ChromiumCardNode(BaseNodeWidget):
+    CHROMIUM_APPS = {"chromium", "chromium-browser", "google-chrome", "google-chrome-stable"}
+
+    # Zoom distance thresholds for automatic window state changes.
+    ZOOM_THUMB = 0.7
+    ZOOM_FULL = 1.6
+    # Thumbnail refresh interval in milliseconds.
+    THUMB_INTERVAL_MS = 1200
+
+    def __init__(self):
+        super().__init__("Chromium", QColor("#1a2530"), 320)
+        self._wm = get_window_manager()
+        self._process: subprocess.Popen | None = None
+        self._window: ToplevelWindow | None = None
+        self._zoom_mode: str = "thumb"  # thumb | window | fullscreen
+        self._last_thumb: QPixmap | None = None
+        self._build_ui()
+        self.add_socket("out", "signal")
+        self._tick()
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()}; color: {WHITE.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._title_label = QLabel("Chromium")
+        self._title_label.setStyleSheet("color: #d4d4d4; font-weight: bold; font-size: 12px; background: transparent;")
+        layout.addWidget(self._title_label)
+
+        self._status = QLabel("Looking for Chromium...")
+        self._status.setStyleSheet("color: #888; font-size: 10px; padding: 2px; background: transparent;")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        for label, cb in [
+            ("Launch", self._launch),
+            ("Focus", self._focus),
+            ("Min", self._minimize),
+            ("Max", self._maximize),
+            ("Close", self._close),
+        ]:
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "QPushButton { background: #1c1e23; color: #d4d4d4; border: 1px solid #2a2d33; "
+                "border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
+                "QPushButton:hover { border-color: #ff7800; color: #ff7800; }"
+            )
+            btn.clicked.connect(cb)
+            btn_row.addWidget(btn)
+        layout.addLayout(btn_row)
+
+        self._thumb_label = QLabel()
+        self._thumb_label.setStyleSheet("background: #0d0e12; border: 1px solid #1e1e24; border-radius: 4px;")
+        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb_label.setMinimumHeight(120)
+        self._thumb_label.setWordWrap(True)
+        self._thumb_label.setText("Thumbnail will appear when Chromium is running")
+        layout.addWidget(self._thumb_label)
+
+        w.setMinimumHeight(240)
+        self.set_body_widget(w)
+
+    def _find_window(self) -> ToplevelWindow | None:
+        for app_id in self.CHROMIUM_APPS:
+            win = self._wm.find_by_app_id(app_id)
+            if win:
+                return win
+        return None
+
+    def _canvas_scale(self) -> float:
+        parent = self.widget.parentWidget()
+        if parent and hasattr(parent, "_state"):
+            return parent._state.get("scale", 1.0)
+        return 1.0
+
+    def _card_screen_geometry(self) -> tuple[int, int, int, int] | None:
+        if not self.widget.parentWidget():
+            return None
+        pos = self.widget.mapToGlobal(QPoint(0, 0))
+        return pos.x(), pos.y(), self.widget.width(), self.widget.height()
+
+    def _tick(self):
+        self._window = self._find_window()
+        if self._window:
+            self._title_label.setText(self._window.title or "Chromium")
+        else:
+            self._title_label.setText("Chromium")
+
+        if self._window:
+            self._capture_thumb()
+            if self.isSelected():
+                self._update_zoom_state(self._canvas_scale())
+            else:
+                # When deselected, drop back to thumbnail mode so the canvas stays usable.
+                if self._zoom_mode != "thumb":
+                    self._apply_zoom_mode("thumb")
+
+        self._status.setText(
+            f"{self._window.app_id if self._window else 'not running'} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
+        )
+        QTimer.singleShot(self.THUMB_INTERVAL_MS, self._tick)
+
+    def _capture_thumb(self):
+        title = self._window.title if self._window else None
+        app_id = None
+        if self._window:
+            aid = self._window.app_id
+            if aid and aid.lower() in {a.lower() for a in self.CHROMIUM_APPS}:
+                app_id = aid
+        result = capture_thumbnail(app_id=app_id, title=title, max_size=280)
+        if result is None:
+            return
+        data, w, h = result
+        try:
+            image = QImage(data, w, h, w * 4, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(image)
+            self._last_thumb = pixmap
+            self._thumb_label.setPixmap(pixmap.scaled(
+                self._thumb_label.width(), self._thumb_label.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        except Exception:
+            pass
+
+
+    def _update_zoom_state(self, scale: float):
+        if scale < self.ZOOM_THUMB:
+            target = "thumb"
+        elif scale < self.ZOOM_FULL:
+            target = "window"
+        else:
+            target = "fullscreen"
+        if target != self._zoom_mode:
+            self._apply_zoom_mode(target)
+
+    def _apply_zoom_mode(self, mode: str):
+        self._zoom_mode = mode
+        if not self._window:
+            return
+        title = self._window.title
+        raw_app_id = self._window.app_id
+        app_id = raw_app_id if (raw_app_id and raw_app_id.lower() in {a.lower() for a in self.CHROMIUM_APPS}) else None
+        if mode == "thumb":
+            self._wm.minimize(title)
+        elif mode == "window":
+            self._wm.focus(title)
+            # Position the real Chromium window over the card. If the card is too
+            # small, use a centered usable size instead.
+            geom = self._card_screen_geometry()
+            if geom:
+                x, y, cw, ch = geom
+                # Ensure a minimum usable size while keeping it centered on the card.
+                nw = max(cw, 900)
+                nh = max(ch, 600)
+                x = max(0, x - (nw - cw) // 2)
+                y = max(0, y - (nh - ch) // 2)
+                move_resize_window(app_id=app_id, title=title, x=x, y=y, width=nw, height=nh)
+            raise_window(app_id=app_id, title=title)
+        elif mode == "fullscreen":
+            self._wm.fullscreen(title)
+
+    def _launch(self):
+        if self._window:
+            self._focus()
+            return
+        try:
+            self._process = subprocess.Popen(
+                ["chromium", "--ozone-platform=x11"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self._status.setText("Launching Chromium...")
+        except Exception as e:
+            self._status.setText(f"Launch failed: {e}")
+
+    def _ensure_window(self) -> bool:
+        if not self._window:
+            self._window = self._find_window()
+        return self._window is not None
+
+    def _focus(self):
+        if self._ensure_window():
+            if self._wm.focus(self._window.title):
+                self._status.setText("Focused Chromium")
+            else:
+                self._status.setText("Focus failed")
+        else:
+            self._status.setText("No Chromium window")
+
+    def _minimize(self):
+        if self._ensure_window():
+            if self._wm.minimize(self._window.title):
+                self._status.setText("Minimized Chromium")
+            else:
+                self._status.setText("Minimize failed")
+        else:
+            self._status.setText("No Chromium window")
+
+    def _maximize(self):
+        if self._ensure_window():
+            if self._wm.maximize(self._window.title):
+                self._status.setText("Maximized Chromium")
+            else:
+                self._status.setText("Maximize failed")
+        else:
+            self._status.setText("No Chromium window")
+
+    def _close(self):
+        if self._ensure_window():
+            if self._wm.close(self._window.title):
+                self._status.setText("Closed Chromium")
+                self._window = None
+            else:
+                self._status.setText("Close failed")
+        else:
+            self._status.setText("No Chromium window")
+
+    def cleanup(self):
+        # Return any raised Chromium window to a normal minimized state so it
+        # does not stay floating over the workspace after the card is removed.
+        if self._window:
+            self._wm.minimize(self._window.title)
+
+    def serialize(self) -> dict:
+        d = super().serialize()
+        return d
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
