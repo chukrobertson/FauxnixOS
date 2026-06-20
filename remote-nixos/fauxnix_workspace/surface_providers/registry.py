@@ -211,3 +211,75 @@ def _create_fauxpass_app(spec: dict) -> SurfaceProvider:
         width=max(1, width),
         height=max(1, height),
     )
+
+
+@register_provider(
+    "looking-glass-vm",
+    label="QEMU VM (QMP + screendump)",
+    description="Launches a QEMU VM in headless mode, captures frames via QMP screendump.",
+    required=("qemu_argv",),
+)
+def _create_looking_glass_vm(spec: dict) -> SurfaceProvider:
+    from .looking_glass_vm import QemuVMProvider
+
+    qemu_argv = spec.get("qemu_argv")
+    if qemu_argv is None:
+        qemu_argv = spec.get("argv")
+    if qemu_argv is None:
+        qemu_argv = spec.get("args")
+    if qemu_argv is None:
+        qemu_argv = spec.get("command")
+    if isinstance(qemu_argv, str):
+        import shlex
+        qemu_argv = shlex.split(qemu_argv)
+    if not isinstance(qemu_argv, list) or not qemu_argv:
+        qemu_argv = ["qemu-system-x86_64"]
+    qemu_argv = [str(item) for item in qemu_argv]
+
+    instance_id = str(spec.get("instance_id") or spec.get("id") or "")
+    name = str(spec.get("name") or spec.get("surface_name") or "VM")
+    width = int(spec.get("width", spec.get("w", 1280)))
+    height = int(spec.get("height", spec.get("h", 720)))
+    qmp_path = str(spec.get("qmp_path") or "")
+    vnc_display = int(spec.get("vnc_display", 0))
+
+    return QemuVMProvider(
+        qemu_argv=qemu_argv,
+        qmp_path=qmp_path,
+        vnc_display=vnc_display,
+        width=width,
+        height=height,
+        instance_id=instance_id,
+        name=name,
+    )
+
+
+@register_provider(
+    "qemu-vm",
+    label="QEMU VM (alias)",
+    description="Alias for looking-glass-vm.",
+    required=("qemu_argv",),
+)
+def _create_qemu_vm_alias(spec: dict) -> SurfaceProvider:
+    aliased = dict(spec)
+    aliased["kind"] = "looking-glass-vm"
+    return _create_looking_glass_vm(aliased)
+
+
+@register_provider(
+    "nested-gnome",
+    label="Nested GNOME Desktop",
+    description="Runs GNOME Shell inside a nested Cage compositor on a private X display.",
+    required=(),
+)
+def _create_nested_gnome(spec: dict) -> SurfaceProvider:
+    from .nested_gnome import NestedGnomeProvider
+
+    width = int(spec.get("width", spec.get("w", 1280)))
+    height = int(spec.get("height", spec.get("h", 720)))
+    xdisplay = str(spec.get("xdisplay") or spec.get("display") or ":2")
+    return NestedGnomeProvider(
+        width=max(320, width),
+        height=max(240, height),
+        xdisplay=xdisplay,
+    )

@@ -5449,3 +5449,240 @@ class ChromiumCardNode(BaseNodeWidget):
 
     def deserialize(self, data: dict):
         super().deserialize(data)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Environments Node — sub loader for macOS VM, Windows VM, GNOME, etc.
+# ═══════════════════════════════════════════════════════════════════════
+
+_ENVIRONMENTS: list[dict] = [
+    {
+        "id": "macos-vm",
+        "name": "macOS Sequoia",
+        "icon": "",
+        "kind": "looking-glass-vm",
+        "surface_kind": "vm",
+        "description": "macOS 15 VM via QEMU/KVM + OpenCore",
+        "width": 1920,
+        "height": 1080,
+        "memory_mb": 8192,
+        "smp": 4,
+        "aspect": 16 / 9,
+        "context": {"os": "macos", "hypervisor": "qemu"},
+    },
+    {
+        "id": "windows-vm",
+        "name": "Windows 11",
+        "icon": "",
+        "kind": "looking-glass-vm",
+        "surface_kind": "vm",
+        "description": "Windows 11 VM via QEMU/KVM",
+        "width": 1920,
+        "height": 1080,
+        "memory_mb": 8192,
+        "smp": 4,
+        "aspect": 16 / 9,
+        "context": {"os": "windows", "hypervisor": "qemu"},
+    },
+    {
+        "id": "nested-gnome",
+        "name": "GNOME Desktop",
+        "icon": "",
+        "kind": "nested-gnome",
+        "surface_kind": "desktop",
+        "description": "Full GNOME session in a nested compositor",
+        "width": 1280,
+        "height": 720,
+        "aspect": 16 / 9,
+        "context": {"os": "linux", "desktop": "gnome"},
+    },
+    {
+        "id": "fauxnix-workspace",
+        "name": "Fauxnix Workspace",
+        "icon": "",
+        "kind": "self",
+        "surface_kind": "workspace",
+        "description": "Switch to the Fauxnix canvas workspace",
+        "width": 0,
+        "height": 0,
+        "aspect": 16 / 9,
+        "context": {"os": "fauxnix", "desktop": "workspace"},
+    },
+]
+
+
+@register_node_type(
+    "Environments",
+    "Environment sub-loader — launch macOS, Windows, GNOME, or switch to Fauxnix workspace",
+)
+class EnvironmentsNode(BaseNodeWidget):
+    """Environment sub-loader: grid of OS environments.
+
+    Each environment can be:
+      - A VM (backed by looking-glass-vm or qemu-vm provider)
+      - A nested desktop (backed by nested-gnome provider)
+      - The Fauxnix workspace itself (just activates the current tab)
+
+    Clicking an environment spawns a DisplayCardNode with the appropriate
+    source spec and launches it.
+    """
+
+    def __init__(self):
+        super().__init__("Environments", QColor("#1a1a2e"), 420)
+        self._build_ui()
+        self.add_socket("out", "data")
+
+    def _build_ui(self):
+        w = QWidget()
+        w.setStyleSheet(f"background: {NODE_BG.name()};")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        title = QLabel("Choose an Environment")
+        title.setStyleSheet(
+            "color: #d4d4d4; font-size: 14px; font-weight: bold; "
+            "background: transparent; padding: 2px 0;"
+        )
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setSpacing(6)
+
+        for idx, env in enumerate(_ENVIRONMENTS):
+            card = QFrame()
+            card.setStyleSheet(
+                "QFrame { background: #14151e; border: 1px solid #2a2d3a; "
+                "border-radius: 8px; }"
+                "QFrame:hover { border-color: #ff7800; background: #1a1c26; }"
+            )
+            card.setFixedSize(180, 120)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 6, 8, 6)
+            card_layout.setSpacing(2)
+
+            name_label = QLabel(env["name"])
+            name_label.setStyleSheet(
+                "color: #d4d4d4; font-size: 13px; font-weight: bold; "
+                "background: transparent;"
+            )
+            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(name_label)
+
+            badge = QLabel(env["surface_kind"].upper())
+            badge.setStyleSheet(
+                "color: #5a7a9a; font-size: 9px; background: #0d1018; "
+                "border: 1px solid #1e2834; border-radius: 3px; "
+                "padding: 1px 6px;"
+            )
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(badge)
+
+            desc = QLabel(env["description"])
+            desc.setStyleSheet(
+                "color: #7a8a9a; font-size: 9px; background: transparent;"
+            )
+            desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            desc.setWordWrap(True)
+            card_layout.addWidget(desc)
+
+            card_layout.addStretch()
+            card.mousePressEvent = lambda e, env=env: self._spawn_environment(env)
+            grid.addWidget(card, idx // 2, idx % 2)
+
+        layout.addLayout(grid)
+
+        hint = QLabel(
+            "Click an environment to launch it. Each VM or desktop "
+            "gets its own Display card on the canvas."
+        )
+        hint.setStyleSheet(
+            "color: #5a6a7a; font-size: 9px; background: transparent; "
+            "padding: 4px 0;"
+        )
+        hint.setWordWrap(True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+
+        w.setMinimumHeight(300)
+        self.set_body_widget(w)
+
+    def _find_canvas(self):
+        w = self.widget
+        while w:
+            if hasattr(w, "_state") and "nodes" in w._state:
+                return w
+            w = w.parentWidget()
+        return None
+
+    def _spawn_environment(self, env: dict):
+        canvas = self._find_canvas()
+        if canvas is None:
+            return
+
+        env_id = env.get("id", "")
+        env_name = env.get("name", "Environment")
+
+        if env_id == "fauxnix-workspace":
+            self._emit_output(env, {"action": "switch_tab", "target": "main"})
+            return
+
+        source_spec = {
+            "kind": env.get("kind", "looking-glass-vm"),
+            "surface_name": env_name,
+            "surface_kind": env.get("surface_kind", "vm"),
+            "source_name": env_name,
+            "source_kind": env.get("kind"),
+            "card_title": env_name,
+            "width": env.get("width", 1280),
+            "height": env.get("height", 720),
+            "aspect": env.get("aspect", 16 / 9),
+            "context": dict(env.get("context", {})),
+        }
+
+        provider = create_source(source_spec)
+
+        offset = 30 + (len(canvas._state.get("nodes", [])) % 8) * 30
+        card = GenericSurfaceCardNode(
+            provider=provider,
+            source_spec=source_spec,
+            surface_name=env_name,
+            surface_kind=env.get("surface_kind", "vm"),
+            width=480,
+            node_title=env_name,
+        )
+        card.set_logical_pos(self._logical_x + offset, self._logical_y + offset)
+        canvas._add_node(card)
+
+        if canvas._state.get("selected_node"):
+            canvas._state["selected_node"].deselect()
+        canvas._state["selected_node"] = card
+        card.select()
+        canvas.update()
+
+        card._launch()
+
+        self._emit_output(env, {
+            "action": "spawned",
+            "environment": env_id,
+            "source_spec": source_spec,
+        })
+
+    def _emit_output(self, env: dict, extra: dict | None = None):
+        payload = {
+            "type": "environment",
+            "environment": env.get("id", ""),
+            "name": env.get("name", ""),
+        }
+        if extra:
+            payload.update(extra)
+        for s in self._sockets:
+            if s.label == "out":
+                s.push_data(payload)
+
+    def serialize(self) -> dict:
+        return super().serialize()
+
+    def deserialize(self, data: dict):
+        super().deserialize(data)
