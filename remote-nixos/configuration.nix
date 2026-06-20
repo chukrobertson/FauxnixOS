@@ -2,14 +2,20 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   fauxnixWorkspace = "/home/chvk/Fauxnix";
   cowriterWorkspace = "${fauxnixWorkspace}/Cowriter";
   fauxnixKnowledge = "${fauxnixWorkspace}/Knowledge";
   fauxnixThreads = "${fauxnixWorkspace}/Threads";
-  workspacePython = pkgs.python3.withPackages (ps: [ ps.pyqt6 ps.pyqt6-webengine ps.faster-whisper ]);
+  workspacePython = pkgs.python3.withPackages (ps: [ ps.pyqt6 ps.pyqt6-webengine ps.faster-whisper ps.xlib ]);
+  fauxnixArchivist = import ./archivist-gnome {
+    inherit pkgs;
+    # Point at the copied archivist-app source for Nix builds.
+    # Sync from E:\Archivist\app\ before rebuilding on the remote.
+    archivistAppSrc = ./archivist_app;
+  };
   workspaceLib = pkgs.stdenvNoCC.mkDerivation {
     pname = "fauxnix-workspace-lib";
     version = "0.1.0";
@@ -26,9 +32,21 @@ let
       cp $src/otg_server.py $out/lib/fauxnix_workspace/
       cp $src/node_server.py $out/lib/fauxnix_workspace/
       cp $src/node_process.py $out/lib/fauxnix_workspace/
+      cp $src/window_manager.py $out/lib/fauxnix_workspace/
+      cp $src/window_thumbnail.py $out/lib/fauxnix_workspace/
       mkdir -p $out/lib/fauxnix_workspace/nodes
       cp $src/nodes/__init__.py $out/lib/fauxnix_workspace/nodes/
       cp $src/nodes/node_types.py $out/lib/fauxnix_workspace/nodes/
+      mkdir -p $out/lib/fauxnix_workspace/surface_providers
+      cp $src/surface_providers/__init__.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/base.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/fauxpass_app.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/registry.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/xwayland_per_app.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/test_xwayland.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/test_app_card.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/test_app_launcher.py $out/lib/fauxnix_workspace/surface_providers/
+      cp $src/surface_providers/test_input.py $out/lib/fauxnix_workspace/surface_providers/
       mkdir -p $out/lib/fauxnix_workspace/examples
       cp $src/examples/*.json $out/lib/fauxnix_workspace/examples/
     '';
@@ -67,7 +85,14 @@ let
   };
   fauxnixCanvas = pkgs.writeShellApplication {
     name = "fauxnix-workspace";
-    runtimeInputs = [ workspacePython ];
+    runtimeInputs = [
+      workspacePython
+      pkgs.xwayland
+      pkgs.xorg.setxkbmap
+      pkgs.xorg.xrdb
+      pkgs.xorg.xkbcomp
+      pkgs.wlrctl
+    ];
     text = ''
       export QT_QPA_PLATFORM=xcb
       export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
@@ -605,12 +630,28 @@ EOF
   fennixPython = pkgs.python3.withPackages (pythonPackages: [
     pythonPackages.tkinter
   ]);
+  fennixChatLauncher = pkgs.writeShellApplication {
+    name = "fennix-chat";
+    runtimeInputs = with pkgs; [
+      systemd
+    ];
+    text = ''
+      set -eu
+
+      if systemctl --user is-active --quiet fennix-chat.service; then
+        exit 0
+      fi
+
+      exec systemd-run --user --unit=fennix-chat --collect ${fennixPython}/bin/python3 /etc/fennix/gui.py "$@"
+    '';
+  };
   fennixDesktop = pkgs.makeDesktopItem {
     name = "fennix";
     desktopName = "Fennix";
     genericName = "Local assistant";
     comment = "Fennix local assistant for Fauxnix";
-    exec = "fennix-gui";
+    exec = "fennix-chat";
+    startupWMClass = "Fennix";
     terminal = false;
     categories = [ "Utility" ];
   };
@@ -777,6 +818,321 @@ EOF
     ];
     text = ''
       exec fauxfetch "$@"
+    '';
+  };
+  fauxnixScreenshot = pkgs.writeShellApplication {
+    name = "fauxnix-screenshot";
+    runtimeInputs = with pkgs; [
+      bash
+      coreutils
+      glib
+      gnugrep
+      gnused
+      python3
+      systemd
+    ] ++ lib.optionals (builtins.hasAttr "ffmpeg-headless" pkgs) [
+      pkgs.ffmpeg-headless
+    ] ++ lib.optionals (builtins.hasAttr "gnome-screenshot" pkgs) [
+      pkgs.gnome-screenshot
+    ];
+    text = ''
+      set -eu
+
+      method=auto
+      output=""
+      json=0
+      snapshot_dir="''${FAUXNIX_SNAPSHOTS_DIR:-${fauxnixSnapshots}}/screenshots"
+
+      usage() {
+        printf '%s\n' \
+          'usage: fauxnix-screenshot [capture] [output.png]' \
+          '       fauxnix-screenshot --method auto|screencast|gnome|dbus|fb [output.png]' \
+          '       fauxnix-screenshot --json [output.png]' \
+          '       fauxnix-screenshot status' \
+          >&2
+        exit 2
+      }
+
+      status() {
+        echo "snapshot_dir=$snapshot_dir"
+        if [ -e "$snapshot_dir/latest.png" ]; then
+          echo "latest=$snapshot_dir/latest.png"
+        else
+          echo "latest="
+        fi
+      }
+
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          capture)
+            ;;
+          status)
+            status
+            exit 0
+            ;;
+          --method)
+            shift
+            [ "$#" -gt 0 ] || usage
+            method="$1"
+            ;;
+          --json)
+            json=1
+            ;;
+          --dir)
+            shift
+            [ "$#" -gt 0 ] || usage
+            snapshot_dir="$1"
+            ;;
+          -o|--output)
+            shift
+            [ "$#" -gt 0 ] || usage
+            output="$1"
+            ;;
+          -h|--help)
+            usage
+            ;;
+          *)
+            output="$1"
+            ;;
+        esac
+        shift
+      done
+
+      case "$method" in
+        auto|screencast|gnome|dbus|fb) ;;
+        *) usage ;;
+      esac
+
+      mkdir -p "$snapshot_dir"
+      if [ -z "''${XDG_RUNTIME_DIR:-}" ]; then
+        runtime_dir="/run/user/$(id -u)"
+        export XDG_RUNTIME_DIR="$runtime_dir"
+      fi
+      if [ -z "''${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+      fi
+      user_env="$snapshot_dir/.fauxnix-screenshot-env.$$"
+      if systemctl --user show-environment > "$user_env" 2>/dev/null; then
+        while IFS='=' read -r key value; do
+          case "$key" in
+            DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|DBUS_SESSION_BUS_ADDRESS)
+              export "$key=$value"
+              ;;
+          esac
+        done < "$user_env"
+      fi
+      rm -f "$user_env"
+
+      if [ -z "$output" ]; then
+        output="$snapshot_dir/$(date +%Y%m%d-%H%M%S)-screen.png"
+      else
+        case "$output" in
+          */*) ;;
+          *) output="$snapshot_dir/$output" ;;
+        esac
+        case "$output" in
+          *.png) ;;
+          *) output="$output.png" ;;
+        esac
+      fi
+      mkdir -p "$(dirname "$output")"
+
+      base="$(basename "$output")"
+      tmp="$(dirname "$output")/.$base.tmp.$$.png"
+      err="$tmp.err"
+      method_used=""
+
+      try_gnome_cli() {
+        command -v gnome-screenshot >/dev/null 2>&1 || return 1
+        rm -f "$tmp"
+        timeout 4s gnome-screenshot -f "$tmp" >"$err" 2>&1 || return 1
+        [ -s "$tmp" ] || return 1
+        method_used=gnome-screenshot
+      }
+
+      try_gnome_dbus() {
+        command -v gdbus >/dev/null 2>&1 || return 1
+        rm -f "$tmp"
+        timeout 4s gdbus call --session \
+          --dest org.gnome.Shell.Screenshot \
+          --object-path /org/gnome/Shell/Screenshot \
+          --method org.gnome.Shell.Screenshot.Screenshot \
+          false true "$tmp" >"$err" 2>&1 || return 1
+        [ -s "$tmp" ] || return 1
+        method_used=gnome-dbus
+      }
+
+      try_screencast() {
+        command -v gdbus >/dev/null 2>&1 || return 1
+        command -v ffmpeg >/dev/null 2>&1 || return 1
+        rm -f "$tmp"
+        clip_template="$(dirname "$tmp")/.$base.clip-%d.webm"
+        rm -f "$(dirname "$tmp")/.$base.clip-"*.webm 2>/dev/null || true
+
+        saved_banners=""
+        restore_banners=0
+        if command -v gsettings >/dev/null 2>&1; then
+          saved_banners="$(gsettings get org.gnome.desktop.notifications show-banners 2>/dev/null || true)"
+          if [ "$saved_banners" = "true" ]; then
+            if gsettings set org.gnome.desktop.notifications show-banners false >/dev/null 2>&1; then
+              restore_banners=1
+            fi
+          fi
+        fi
+
+        screencast_ok=0
+        clip=""
+        if timeout 4s gdbus call --session \
+          --dest org.gnome.Shell.Screencast \
+          --object-path /org/gnome/Shell/Screencast \
+          --method org.gnome.Shell.Screencast.Screencast \
+          "$clip_template" "{}" >"$err" 2>&1; then
+          sleep 1
+          gdbus call --session \
+            --dest org.gnome.Shell.Screencast \
+            --object-path /org/gnome/Shell/Screencast \
+            --method org.gnome.Shell.Screencast.StopScreencast >>"$err" 2>&1 || true
+          for candidate in "$(dirname "$tmp")/.$base.clip-"*.webm; do
+            if [ -s "$candidate" ]; then
+              clip="$candidate"
+              break
+            fi
+          done
+          if [ -n "$clip" ] && [ -s "$clip" ]; then
+            if timeout 8s ffmpeg -y -hide_banner -loglevel error -i "$clip" -frames:v 1 "$tmp" >>"$err" 2>&1 && [ -s "$tmp" ]; then
+              screencast_ok=1
+            fi
+          fi
+        fi
+
+        if [ "$restore_banners" -eq 1 ]; then
+          gsettings set org.gnome.desktop.notifications show-banners "$saved_banners" >/dev/null 2>&1 || true
+        fi
+
+        [ "$screencast_ok" -eq 1 ] || return 1
+        rm -f "$clip"
+        method_used=gnome-screencast
+      }
+
+      try_fb() {
+        python3 - "$tmp" >"$err" 2>&1 <<'PY'
+import binascii
+import os
+import struct
+import sys
+import zlib
+from pathlib import Path
+
+out = Path(sys.argv[1])
+fb = Path(os.environ.get("FAUXNIX_FRAMEBUFFER", "/dev/fb0"))
+root = Path("/sys/class/graphics/fb0")
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8").strip()
+
+width, height = [int(part) for part in read_text(root / "virtual_size").split(",", 1)]
+bpp = int(read_text(root / "bits_per_pixel"))
+stride_path = root / "stride"
+stride = int(read_text(stride_path)) if stride_path.exists() else width * (bpp // 8)
+if bpp != 32:
+    raise SystemExit(f"unsupported framebuffer depth: {bpp}")
+
+with fb.open("rb", buffering=0) as handle:
+    raw = handle.read(stride * height)
+if len(raw) < stride * height:
+    raise SystemExit("short framebuffer read")
+
+scanlines = []
+for y in range(height):
+    row = raw[y * stride : y * stride + width * 4]
+    rgba = bytearray(width * 4)
+    for src in range(0, width * 4, 4):
+        # i915drmfb exposes little-endian XRGB8888: B, G, R, unused.
+        rgba[src] = row[src + 2]
+        rgba[src + 1] = row[src + 1]
+        rgba[src + 2] = row[src]
+        rgba[src + 3] = 255
+    scanlines.append(b"\x00" + bytes(rgba))
+
+def chunk(kind: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + kind
+        + data
+        + struct.pack(">I", binascii.crc32(kind + data) & 0xFFFFFFFF)
+    )
+
+png = [
+    b"\x89PNG\r\n\x1a\n",
+    chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)),
+    chunk(b"IDAT", zlib.compress(b"".join(scanlines), 6)),
+    chunk(b"IEND", b""),
+]
+out.write_bytes(b"".join(png))
+PY
+        method_used=framebuffer
+      }
+
+      capture_ok=0
+      case "$method" in
+        auto)
+          if try_gnome_dbus || try_screencast || try_gnome_cli || try_fb; then
+            capture_ok=1
+          fi
+          ;;
+        screencast)
+          if try_screencast; then capture_ok=1; fi
+          ;;
+        gnome)
+          if try_gnome_cli; then capture_ok=1; fi
+          ;;
+        dbus)
+          if try_gnome_dbus; then capture_ok=1; fi
+          ;;
+        fb)
+          if try_fb; then capture_ok=1; fi
+          ;;
+      esac
+
+      if [ "$capture_ok" -ne 1 ]; then
+        echo "screenshot failed" >&2
+        if [ -s "$err" ]; then
+          sed -n '1,8p' "$err" >&2
+        fi
+        rm -f "$tmp" "$err"
+        exit 1
+      fi
+
+      mv "$tmp" "$output"
+      chmod 0644 "$output"
+      ln -sfn "$output" "$snapshot_dir/latest.png" 2>/dev/null || cp "$output" "$snapshot_dir/latest.png"
+
+      meta="$output.json"
+      python3 - "$output" "$meta" "$method_used" <<'PY'
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+meta = Path(sys.argv[2])
+payload = {
+    "path": str(path),
+    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    "method": sys.argv[3],
+    "size_bytes": path.stat().st_size,
+}
+meta.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+      rm -f "$err"
+
+      if [ "$json" -eq 1 ]; then
+        cat "$meta"
+      else
+        echo "$output"
+        echo "method=$method_used"
+      fi
     '';
   };
   fauxnixSettings = pkgs.writeShellApplication {
@@ -1885,165 +2241,11 @@ PY
     font=monospace 10
   '';
 
-  fauxnixWayfireConfig = pkgs.writeText "wayfire.ini" ''
-    [core]
-    plugins = alpha autostart command cube expo fast-switcher grid idle invert move oswitch place resize switcher vswitch window-rules wm-actions wrot zoom
-    close_top_view = <super> KEY_Q
-    vwidth = 6
-    vheight = 1
-
-    [autostart]
-    test = ${pkgs.coreutils}/bin/touch /tmp/wayfire_autostart_worked
-
-    [command]
-    binding_terminal = <super> KEY_ENTER | ${pkgs.alacritty}/bin/alacritty
-    binding_launcher = <super> KEY_D | ${fauxnixRofi}/bin/rofi -show drun
-    binding_threadmenu = <super> KEY_T | ${fauxnixThreadLauncher}/bin/fauxnix-thread menu
-    binding_fennix = <super> KEY_F | ${fauxnixThreadLauncher}/bin/fauxnix-thread fennix
-    binding_fauxnix_thread = <super> <shift> KEY_F | ${fauxnixThreadLauncher}/bin/fauxnix-thread fauxnix
-    binding_cowriter = <super> <shift> KEY_C | ${fauxnixThreadLauncher}/bin/fauxnix-thread cowriter
-    binding_canvas_return = <super> KEY_ESCAPE | ${pkgs.wayfire}/bin/wf-msg expo
-    binding_close_return = <super> <shift> KEY_ESCAPE | ${pkgs.util-linux}/bin/kill -9 $(${pkgs.procps}/bin/pidof foot firefox chromium gimp 2>/dev/null | tr ' ' '\n' | head -1); ${pkgs.wayfire}/bin/wf-msg expo
-
-    [input]
-    tap_to_click = true
-    natural_scroll = true
-    disable_touchpad_while_typing = true
-
-    [output]
-    mode = 1600x900@60
-    bg_color = 0.05|0.05|0.08|1
-
-    [window-rules]
-    fauxnix_workspace = on created if title is "Fauxnix Workspace" then set fullscreen
-    fauxnix_launcher = on created if title is "Fauxnix Launcher" then set floating
-
-    [vswitch]
-    binding_switch_left = <super> <ctrl> KEY_LEFT
-    binding_switch_right = <super> <ctrl> KEY_RIGHT
-    binding_switch_up = <super> <ctrl> KEY_UP
-    binding_switch_down = <super> <ctrl> KEY_DOWN
-
-    [expo]
-    select_workspace_1 = KEY_1
-    select_workspace_2 = KEY_2
-    select_workspace_3 = KEY_3
-    select_workspace_4 = KEY_4
-    select_workspace_5 = KEY_5
-    select_workspace_6 = KEY_6
-
-    [grid]
-    slot_bl = <super> KEY_KP_1
-    slot_b = <super> KEY_KP_2
-    slot_br = <super> KEY_KP_3
-    slot_l = <super> KEY_KP_4
-    slot_c = <super> KEY_KP_5
-    slot_r = <super> KEY_KP_6
-    slot_tl = <super> KEY_KP_7
-    slot_t = <super> KEY_KP_8
-    slot_tr = <super> KEY_KP_9
-
-    [move]
-    activate = <super> BTN_LEFT
-    activate_alt = <alt> BTN_LEFT
-
-    [resize]
-    activate = <super> BTN_RIGHT
-    activate_alt = <alt> BTN_RIGHT
-
-    [wm-actions]
-    toggle_fullscreen = <super> KEY_M
-    toggle_floating = <super> <shift> KEY_SPACE
-    toggle_sticky = <super> <shift> KEY_S
-  '';
-
-  fauxnixWayfireSession = pkgs.stdenvNoCC.mkDerivation {
-    pname = "fauxnix-wayfire-session";
-    version = "0.1.0";
-    dontUnpack = true;
-    installPhase = ''
-      mkdir -p $out/share/wayland-sessions
-      cat > $out/share/wayland-sessions/wayfire.desktop << 'EOF'
-      [Desktop Entry]
-      Name=Wayfire
-      Comment=3D Wayland compositor
-      Exec=${pkgs.wayfire}/bin/wayfire
-      Type=Application
-      EOF
-    '';
-    passthru.providedSessions = [ "wayfire" ];
-  };
-
-  fauxnixWaybarConfig = pkgs.writeText "waybar-config.jsonc" ''
-    {
-      "layer": "top",
-      "position": "top",
-      "height": 30,
-      "spacing": 4,
-      "modules-left": ["clock"],
-      "modules-center": [],
-      "modules-right": ["tray"],
-      "clock": {
-        "format": "{:%H:%M  %a %d %b}",
-        "tooltip-format": "<big>{:%Y %B}</big>"
-      },
-      "tray": { "spacing": 8 }
-    }
-  '';
-
-  fauxnixWayfireStartup = pkgs.writeShellApplication {
-    name = "fauxnix-wayfire-startup";
-    runtimeInputs = with pkgs; [ waybar ];
-    text = ''
-      export WAYLAND_DISPLAY=wayland-1
-      export DISPLAY=:1
-
-      # Start Wayfire compositor in background
-      ${pkgs.wayfire}/bin/wayfire &
-      WAYFIRE_PID=$!
-
-      # Wait for Wayland socket
-      for _ in $(seq 1 20); do
-        [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break
-        sleep 0.3
-      done
-
-      # Start services and workspace
-      ${fauxd}/bin/fauxd &
-      ${pkgs.waybar}/bin/waybar &
-      ${fauxnixCanvas}/bin/fauxnix-workspace &
-
-      # Wait for compositor to exit, then clean up
-      wait $WAYFIRE_PID
-    '';
-  };
 in
 {
   nixpkgs.config = {
     allowUnfree = true;
   };
-
-  nixpkgs.overlays = [
-    (final: prev: {
-      wf-config = prev.wf-config.overrideAttrs (old: {
-        doCheck = false;
-        mesonFlags = [ "-Dtests=disabled" ];
-        nativeCheckInputs = [];
-        checkInputs = [];
-      });
-      wayfire = prev.wayfire.overrideAttrs (old: {
-        doCheck = false;
-        mesonFlags = [
-          "--sysconfdir /etc"
-          "-Duse_system_wlroots=enabled"
-          "-Duse_system_wfconfig=enabled"
-          "-Dtests=disabled"
-          "-Dwf-touch:tests=disabled"
-        ];
-        nativeCheckInputs = [];
-      });
-    })
-  ];
 
   imports =
     [ # Include the results of the hardware scan.
@@ -2105,8 +2307,9 @@ in
     You can consult Fauxnix knowledge notes at ${fauxnixKnowledge} and thread definitions at ${fauxnixThreads}.
     Fauxdex is your bounded workspace loop: observe, plan, inspect, propose, verify, and summarize.
     Faux-pass is the pass-through app provider registry, not a password manager. Use `faux-pass status`, `faux-pass apps`, and `faux-pass run <app>` for local/remote app provider state.
-    Display modes are managed with `fauxnix-display status`, `fauxnix-display modes`, and `fauxnix-display set <mode>`. Only set modes that Sway reports as supported.
-    The current desktop target is a Nix-owned SDDM+Sway profile with Fennix Desktop, dashboard tray cards, and Rofi. Propose Nix patches, build before switching, and keep rollback notes.
+    Visual memory snapshots are captured with `fauxnix-screenshot`; screenshots are stored under ${fauxnixSnapshots}/screenshots.
+    Display modes are managed through GNOME Settings or `gsettings`; do not use Sway commands on this profile.
+    The current desktop target is a fresh Nix-owned GDM+GNOME profile with macOS-style WhiteSur theming. Propose Nix patches, build before switching, and keep rollback notes.
     For heavy reasoning, long code work, or large-context tasks, suggest escalating to the parent node.
     """
   '';
@@ -2122,7 +2325,8 @@ in
     Be brief and practical.
     Prefer deterministic Fauxnix commands and local evidence over speculation.
     Faux-pass is the local/remote app provider registry; it is checked with `faux-pass status` and `faux-pass apps`.
-    Display modes are checked and changed with `fauxnix-display`; never invent unsupported resolutions.
+    Visual memory snapshots are captured with `fauxnix-screenshot`.
+    Display modes are checked and changed through GNOME Settings or `gsettings`; never invent unsupported resolutions.
     Defer complex coding, planning, or long-context reasoning to Fennix, Fauxdex, or Nexus.
     """
   '';
@@ -2144,11 +2348,11 @@ in
           "type": "local",
           "status": "available",
           "apps": [
-            { "id": "web", "name": "Firefox", "action": ["fauxnix-thread", "web"] },
-            { "id": "terminal", "name": "Terminal", "action": ["fauxnix-thread", "terminal"] },
+            { "id": "web", "name": "Firefox", "action": ["firefox"] },
+            { "id": "terminal", "name": "Terminal", "action": ["alacritty"] },
             { "id": "fennix", "name": "Fennix", "action": ["fennix-gui"] },
-            { "id": "fauxdex", "name": "Fauxdex", "action": ["fauxnix-thread", "fauxdex"] },
-            { "id": "cowriter", "name": "Cowriter", "action": ["fauxnix-thread", "cowriter"] }
+            { "id": "fauxdex", "name": "Fauxdex", "action": ["alacritty", "-e", "fauxdex", "status"] },
+            { "id": "cowriter", "name": "Cowriter", "action": ["alacritty", "--working-directory", "/home/chvk/Fauxnix/Cowriter", "-e", "cowriter", "status"] }
           ]
         },
         {
@@ -2244,13 +2448,15 @@ in
     install -d -o chvk -g users -m 0755 \
       ${fauxnixKnowledge} \
       ${fauxnixKnowledge}/fauxdex \
+      ${fauxnixKnowledge}/fauxshell \
+      ${fauxnixKnowledge}/gnome \
       ${fauxnixKnowledge}/nix \
-      ${fauxnixKnowledge}/sway \
       ${fauxnixWorkspace}/Repos \
       ${fauxnixThreads} \
-      ${fauxnixSnapshots}
+      ${fauxnixSnapshots} \
+      ${fauxnixSnapshots}/screenshots
 
-    if [ ! -e ${fauxnixKnowledge}/README.md ]; then
+    if [ ! -e ${fauxnixKnowledge}/README.md ] || ${pkgs.gnugrep}/bin/grep -q 'sway/' ${fauxnixKnowledge}/README.md; then
       cat > ${fauxnixKnowledge}/README.md <<'EOF'
     # Fauxnix Knowledge
 
@@ -2260,7 +2466,7 @@ in
     Initial areas:
 
     - `nix/` NixOS modules, rebuild workflow, rollback notes
-    - `sway/` Sway profile notes, dashboard tray, rofi, and desktop continuity
+    - `gnome/` GNOME profile notes, macOS-style theming, display settings
     - `fauxshell/` desktop cards, launcher surfaces, and continuity views
     EOF
       chown chvk:users ${fauxnixKnowledge}/README.md
@@ -2273,9 +2479,42 @@ in
     install -o chvk -g users -m 0644 \
       ${./docs/fauxshell-glass.md} \
       ${fauxnixKnowledge}/fauxshell/fauxshell-glass.md
-    install -o chvk -g users -m 0644 \
-      ${./docs/fauxnix-display.md} \
-      ${fauxnixKnowledge}/sway/display-settings.md
+    if [ ! -e ${fauxnixKnowledge}/gnome/display-settings.md ]; then
+      cat > ${fauxnixKnowledge}/gnome/display-settings.md <<'EOF'
+    # GNOME Display Settings
+
+    The active desktop profile is GNOME on GDM. Prefer GNOME Settings for
+    display layout, scaling, refresh rate, night light, and power behavior.
+
+    Command-line checks should use GNOME-oriented tools such as `gsettings`,
+    `gnome-control-center`, or `loginctl`; do not use Sway or Wayfire IPC
+    commands on this profile.
+    EOF
+      chown chvk:users ${fauxnixKnowledge}/gnome/display-settings.md
+      chmod 0644 ${fauxnixKnowledge}/gnome/display-settings.md
+    fi
+
+    if [ ! -e ${fauxnixKnowledge}/gnome/screenshot-memory.md ]; then
+      cat > ${fauxnixKnowledge}/gnome/screenshot-memory.md <<'EOF'
+    # Screenshot Memory
+
+    Fauxnix visual memory uses `fauxnix-screenshot`.
+
+    Commands:
+
+    - `fauxnix-screenshot` captures the screen and writes a PNG into
+      `~/Fauxnix/Snapshots/screenshots/`.
+    - `fauxnix-screenshot --json` returns metadata for Fennix.
+    - `fauxnix-screenshot status` reports the screenshot directory and latest
+      capture.
+
+    On GNOME Wayland, portal and Shell screenshot APIs can deny unattended
+    calls. The tool falls back to `/dev/fb0` on this ThinkPad so local memory
+    captures still work without Sway/Wayfire.
+    EOF
+      chown chvk:users ${fauxnixKnowledge}/gnome/screenshot-memory.md
+      chmod 0644 ${fauxnixKnowledge}/gnome/screenshot-memory.md
+    fi
 
     if [ ! -e ${fauxnixKnowledge}/nix/rebuild-workflow.md ]; then
       cat > ${fauxnixKnowledge}/nix/rebuild-workflow.md <<'EOF'
@@ -2297,29 +2536,29 @@ in
       chmod 0644 ${fauxnixKnowledge}/nix/rebuild-workflow.md
     fi
 
-    if [ ! -e ${fauxnixKnowledge}/sway/usable-profile.md ]; then
-      cat > ${fauxnixKnowledge}/sway/usable-profile.md <<'EOF'
-    # Sway Usable Profile
+    if [ ! -e ${fauxnixKnowledge}/gnome/fresh-profile.md ]; then
+      cat > ${fauxnixKnowledge}/gnome/fresh-profile.md <<'EOF'
+    # GNOME Fresh Profile
 
     Current branch target:
 
-    - Display manager: SDDM
-    - Compositor: Sway
-    - Desktop shell: Fennix Desktop dashboard
-    - Tray/status: Fennix dashboard card
-    - Launcher: Rofi
+    - Display manager: GDM
+    - Desktop: GNOME
+    - Session: gnome
+    - Theme direction: macOS-style WhiteSur GTK/icons with Bibata cursor
+    - Dock: Dash to Dock, bottom aligned
     - Terminal: Alacritty
-    - Notifications: Mako
-    - Fennix launcher: starts automatically inside Sway
+    - Launcher: GNOME app grid/search
 
-    The goal is a desktop that feels familiar enough for users coming from
-    Windows or macOS while staying scriptable and declarative for Fennix.
+    This profile intentionally removes the active Wayfire/Sway/Fauxnix
+    workspace shell path. Keep native GNOME stable first, then rebuild app
+    pass-through or card-like experiments as separate user-level features.
 
-    Regolith is a design reference for approachable keyboard-driven workflow,
-    but this NixOS branch starts with native Sway components.
+    Prefer small Nix patches and `nixos-rebuild build --show-trace` before
+    switching generations.
     EOF
-      chown chvk:users ${fauxnixKnowledge}/sway/usable-profile.md
-      chmod 0644 ${fauxnixKnowledge}/sway/usable-profile.md
+      chown chvk:users ${fauxnixKnowledge}/gnome/fresh-profile.md
+      chmod 0644 ${fauxnixKnowledge}/gnome/fresh-profile.md
     fi
 
     if [ ! -e ${fauxnixKnowledge}/fauxdex/workspace-loop.md ]; then
@@ -2352,28 +2591,23 @@ in
       chmod 0644 ${fauxnixKnowledge}/fauxdex/workspace-loop.md
     fi
 
-    if [ ! -e ${fauxnixThreads}/README.md ]; then
+    if [ ! -e ${fauxnixThreads}/README.md ] || ${pkgs.gnugrep}/bin/grep -q 'fauxnix-thread' ${fauxnixThreads}/README.md; then
       cat > ${fauxnixThreads}/README.md <<'EOF'
     # Fauxnix Threads
 
-    Threads are named workspaces plus app launch profiles. The current v0
-    launcher is `fauxnix-thread`.
+    Threads are named workspaces plus app launch profiles. The current GNOME
+    profile launches ordinary desktop apps directly or through Faux-pass.
 
     Commands:
 
-    - `fauxnix-thread list`
-    - `fauxnix-thread menu`
-    - `fauxnix-thread fennix`
-    - `fauxnix-thread fauxnix`
-    - `fauxnix-thread fauxdex`
-    - `fauxnix-thread cowriter`
-    - `fauxnix-thread admin`
-    - `fauxnix-thread root`
-    - `fauxnix-thread web`
-    - `fauxnix-thread terminal`
+    - `faux-pass status`
+    - `faux-pass apps`
+    - `faux-pass run web`
+    - `faux-pass run terminal`
+    - `faux-pass run fennix`
 
-    Later, Fennix will read structured thread definitions here and generate
-    launcher behavior from them.
+    Legacy thread definitions may remain here for reference, but the fresh
+    desktop target should not depend on the old Sway/Rofi thread launcher.
     EOF
       chown chvk:users ${fauxnixThreads}/README.md
       chmod 0644 ${fauxnixThreads}/README.md
@@ -2438,64 +2672,82 @@ in
     LC_TIME = "en_US.UTF-8";
   };
 
-  # FauxnixOS Sway branch. SDDM gives a familiar graphical login while Sway
-  # keeps the compositor scriptable enough for Fennix to manage.
+  # Fresh desktop base: GNOME on GDM, with a macOS-style WhiteSur look.
   services.xserver.enable = true;
-  services.displayManager.gdm.enable = false;
-  services.desktopManager.gnome.enable = false;
-  services.displayManager.sddm = {
+  services.displayManager.gdm = {
     enable = true;
-    wayland.enable = false;
-    theme = "fauxnix-login-v2";
-    settings.General.GreeterEnvironment = "QML_DISABLE_DISK_CACHE=1";
-    settings.Theme = {
-      Current = "fauxnix-login-v2";
-      ThemeDir = "/run/current-system/sw/share/sddm/themes";
-    };
   };
-  environment.etc."sddm.conf.d/fauxnix-theme.conf".text = ''
-    [General]
-    GreeterEnvironment=QML_DISABLE_DISK_CACHE=1
-
-    [Theme]
-    Current=fauxnix-login-v2
-    ThemeDir=/run/current-system/sw/share/sddm/themes
-  '';
-  services.displayManager.defaultSession = "sway";
-
-  programs.sway = {
+  services.desktopManager.gnome.enable = true;
+  services.displayManager.defaultSession = "gnome";
+  services.displayManager.autoLogin = {
     enable = true;
-    package = pkgs.sway;
-    xwayland.enable = true;
-    wrapperFeatures.gtk = true;
-    extraPackages = with pkgs; [
-      alacritty
-      brightnessctl
-      grim
-      mako
-      networkmanagerapplet
-      slurp
-      swayidle
-      fauxnixLock
-      wdisplays
-      wl-clipboard
-      fauxnixRofi
-    ];
-    extraSessionCommands = ''
-      export XDG_CURRENT_DESKTOP=sway
-      export XDG_SESSION_DESKTOP=sway
-      export XDG_SESSION_TYPE=wayland
-    '';
+    user = "chvk";
   };
 
-  environment.etc."sway/config".source = fauxnixSwayConfig;
-  environment.etc."xdg/waybar/config.jsonc".source = fauxnixWaybarConfig;
+  programs.dconf.enable = true;
+  programs.dconf.profiles.user.databases = [
+    {
+      settings = {
+        "org/gnome/desktop/interface" = {
+          gtk-theme = "WhiteSur-Dark";
+          icon-theme = "WhiteSur";
+          cursor-theme = "Bibata-Modern-Ice";
+          color-scheme = "prefer-dark";
+          clock-show-weekday = true;
+          show-battery-percentage = true;
+          enable-hot-corners = false;
+        };
+        "org/gnome/desktop/wm/preferences" = {
+          button-layout = "close,minimize,maximize:";
+          focus-mode = "click";
+        };
+        "org/gnome/shell" = {
+          enabled-extensions = [
+            "appindicatorsupport@rgcjonas.gmail.com"
+            "blur-my-shell@aunetx"
+            "dash-to-dock@micxgx.gmail.com"
+            "just-perfection-desktop@just-perfection"
+            "user-theme@gnome-shell-extensions.gcampax.github.com"
+          ];
+          favorite-apps = [
+            "firefox.desktop"
+            "fennix.desktop"
+            "fauxnix-archivist.desktop"
+            "org.gnome.Nautilus.desktop"
+            "Alacritty.desktop"
+            "codium.desktop"
+            "org.gnome.Settings.desktop"
+          ];
+        };
+        "org/gnome/shell/extensions/user-theme" = {
+          name = "WhiteSur-Dark";
+        };
+        "org/gnome/shell/extensions/dash-to-dock" = {
+          dock-position = "BOTTOM";
+          extend-height = false;
+          dock-fixed = true;
+          dash-max-icon-size = lib.gvariant.mkInt32 48;
+          transparency-mode = "DYNAMIC";
+          click-action = "minimize-or-previews";
+          show-trash = false;
+          show-mounts = false;
+        };
+        "org/gnome/shell/extensions/just-perfection" = {
+          panel = true;
+          activities-button = false;
+          search = true;
+          startup-status = lib.gvariant.mkInt32 0;
+          workspace-popup = false;
+        };
+      };
+    }
+  ];
 
   xdg.portal = {
     enable = true;
     extraPortals = with pkgs; [
+      xdg-desktop-portal-gnome
       xdg-desktop-portal-gtk
-      xdg-desktop-portal-wlr
     ];
   };
 
@@ -2545,7 +2797,7 @@ in
   users.users."chvk" = {
     isNormalUser = true;
     description = "Chvk";
-    extraGroups = [ "networkmanager" "wheel" ];
+    extraGroups = [ "networkmanager" "wheel" "video" ];
     packages = with pkgs; [
     #  thunderbird
     ];
@@ -2569,12 +2821,9 @@ in
     brightnessctl
     curl
     ethtool
+    fennixChatLauncher
     fennixDesktop
     fennixPython
-    fauxnixCanvas
-    fauxnixNode
-    workspacePython
-    fauxnixSddmTheme
     fauxd
     fauxdex
     fennixCode
@@ -2582,31 +2831,17 @@ in
     fauxnixFetch
     fauxnixGit
     fauxPass
-    fauxnixDisplay
-    fauxnixPower
+    fauxnixScreenshot
     fauxnixSettings
-    foot
     git
-    grim
     iw
     jq
-    mako
     mesa-demos
-    networkmanagerapplet
     pciutils
     pavucontrol
     ripgrep
     rsync
-    slurp
-    swayidle
-    fauxnixLock
-    wayfire
-    waybar
     usbutils
-    wdisplays
-    wl-clipboard
-    fauxnixRofi
-    fauxnixThreadLauncher
     # ── application suite ──
     gimp
     krita
@@ -2614,6 +2849,38 @@ in
     chromium
     amberol
     libreoffice
+  ]
+  ++ lib.optionals (builtins.hasAttr "gnome-tweaks" pkgs) [
+    pkgs.gnome-tweaks
+  ]
+  ++ lib.optionals (builtins.hasAttr "gnome-extension-manager" pkgs) [
+    pkgs.gnome-extension-manager
+  ]
+  ++ lib.optionals (builtins.hasAttr "whitesur-gtk-theme" pkgs) [
+    pkgs.whitesur-gtk-theme
+  ]
+  ++ lib.optionals (builtins.hasAttr "whitesur-icon-theme" pkgs) [
+    pkgs.whitesur-icon-theme
+  ]
+  ++ lib.optionals (builtins.hasAttr "bibata-cursors" pkgs) [
+    pkgs.bibata-cursors
+  ]
+  ++ lib.optionals (builtins.hasAttr "appindicator" pkgs.gnomeExtensions) [
+    pkgs.gnomeExtensions.appindicator
+  ]
+  ++ lib.optionals (builtins.hasAttr "blur-my-shell" pkgs.gnomeExtensions) [
+    pkgs.gnomeExtensions.blur-my-shell
+  ]
+  ++ lib.optionals (builtins.hasAttr "dash-to-dock" pkgs.gnomeExtensions) [
+    pkgs.gnomeExtensions.dash-to-dock
+  ]
+  ++ lib.optionals (builtins.hasAttr "just-perfection" pkgs.gnomeExtensions) [
+    pkgs.gnomeExtensions.just-perfection
+  ]
+  ++ lib.optionals (builtins.hasAttr "user-themes" pkgs.gnomeExtensions) [
+    pkgs.gnomeExtensions.user-themes
+  ]
+  ++ [
     (writeShellApplication {
       name = "fennix";
       runtimeInputs = [ fennixPython ];
@@ -2651,6 +2918,7 @@ in
         exec python3 /etc/fennix/cowriter.py "$@"
       '';
     })
+    fauxnixArchivist
   # vim # Do not forget to add an editor to edit configuration.nix! The Nano editor is also installed by default.
   # wget
   ];
