@@ -101,7 +101,7 @@ def main():
     tray.setContextMenu(tray_menu)
     tray.show()
 
-    _NW = 0x08000000  # CREATE_NO_WINDOW
+    _NW = subprocess.CREATE_NO_WINDOW
 
     # Launch faux-pass provider (check if already running first)
     def _launch_provider():

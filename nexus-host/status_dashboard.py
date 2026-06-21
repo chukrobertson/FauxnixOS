@@ -11,7 +11,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
-_NO_WINDOW = 0x08000000
+import json
+import urllib.request
+
+_NW = subprocess.CREATE_NO_WINDOW  # Prevents console allocation entirely
 
 from ollama_client import get_models, ollama_health
 
@@ -142,7 +145,8 @@ class StatusDashboard(QWidget):
         try:
             import subprocess
             r = subprocess.run(["schtasks", "/Query", "/TN", name, "/V", "/FO", "CSV"],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True, timeout=5,
+                               creationflags=_NW)
             return r.returncode == 0
         except Exception:
             return False
@@ -157,14 +161,14 @@ class StatusDashboard(QWidget):
                 f"-Trigger (New-ScheduledTaskTrigger -AtLogOn) "
                 f"-Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable) "
                 f"-Principal (New-ScheduledTaskPrincipal -UserId '$env:USERDOMAIN\\$env:USERNAME' -LogonType Interactive -RunLevel Limited) -Force"
-            ], capture_output=True, timeout=15)
+            ], capture_output=True, timeout=15, creationflags=_NW)
             self._host_status.setText("enabled")
             self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
         else:
             subprocess.run([
                 "powershell.exe", "-Command",
                 "Unregister-ScheduledTask -TaskName 'Fauxnix Nexus' -Confirm:$false"
-            ], capture_output=True, timeout=15)
+            ], capture_output=True, timeout=15, creationflags=_NW)
             self._host_status.setText("disabled")
             self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
 
@@ -201,7 +205,7 @@ class StatusDashboard(QWidget):
         return w
 
     def _refresh(self):
-        # Network
+        # Network — local IP via UDP socket (no subprocess)
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("100.100.100.100", 1))
@@ -211,29 +215,30 @@ class StatusDashboard(QWidget):
             ip = "unknown"
         self._ip_label.setText(f"IP: {ip}")
 
+        # Tailscale — use CLI with CREATE_NO_WINDOW (no console)
+        ts_ip = "offline"
+        ts_online = 0
         try:
-            ts_ip = subprocess.run(
-                ["tailscale", "ip", "-4"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=_NO_WINDOW,
-            ).stdout.strip()
-        except Exception:
-            ts_ip = "offline"
-        self._tailscale_label.setText(f"Tailscale: {ts_ip}")
-
-        try:
-            r = subprocess.run(
-                ["tailscale", "status"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=_NO_WINDOW,
+            ts_out = subprocess.run(
+                ["tailscale", "status", "--json"],
+                capture_output=True, text=True, timeout=3,
+                creationflags=_NW,
             )
-            online_count = 0
-            for line in r.stdout.strip().split("\n"):
-                if line.strip() and "offline" not in line and "linux" in line.lower():
-                    online_count += 1
-            self._connections_label.setText(f"Fauxnix nodes: {online_count} online")
+            if ts_out.returncode == 0 and ts_out.stdout.strip():
+                ts = json.loads(ts_out.stdout)
+                self_ip = ts.get("Self", {})
+                ts_ip = (self_ip.get("TailscaleIPs") or [None])[0] or "unknown"
+                self._tailscale_label.setText(f"Tailscale: {ts_ip}")
+                peer_list = ts.get("Peer", {})
+                ts_online = sum(
+                    1 for p in peer_list.values()
+                    if p.get("Online", False) and "linux" in p.get("OS", "").lower()
+                )
+            else:
+                self._tailscale_label.setText("Tailscale: offline")
         except Exception:
-            self._connections_label.setText("Fauxnix nodes: —")
+            self._tailscale_label.setText("Tailscale: offline")
+        self._connections_label.setText(f"Fauxnix nodes: {ts_online} online")
 
         # Models
         health = ollama_health()
