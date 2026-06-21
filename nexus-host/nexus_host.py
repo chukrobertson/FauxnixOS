@@ -83,10 +83,14 @@ def main():
     tray.setIcon(QIcon(pix))
     tray.setToolTip(APP_NAME)
 
+    # Main window — must exist before tray menu references it
+    window = MainWindow()
+    window.show()
+
     # Tray menu
     tray_menu = QMenu()
     show_action = QAction("Show", tray_menu)
-    show_action.triggered.connect(lambda: window.show() if window else None)
+    show_action.triggered.connect(window.show)
     tray_menu.addAction(show_action)
 
     quit_action = QAction("Quit", tray_menu)
@@ -95,10 +99,6 @@ def main():
 
     tray.setContextMenu(tray_menu)
     tray.show()
-
-    # Main window
-    window = MainWindow()
-    window.show()
 
     # Status check on startup
     def _startup_check():

@@ -4,7 +4,6 @@ import os
 import socket
 import time
 import subprocess
-import winreg
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QScrollArea,
@@ -124,11 +123,18 @@ class StatusDashboard(QWidget):
         host_row.addWidget(self._host_status)
         layout.addLayout(host_row)
 
-        # Faux-pass provider — bundled with host
+        # Faux-pass provider toggle
         prov_row = QHBoxLayout()
-        prov_label = QLabel("  + Faux-pass Provider (bundled)")
-        prov_label.setStyleSheet("color: #666; font-size: 10px;")
-        prov_row.addWidget(prov_label)
+        self._prov_toggle = QCheckBox("Start Faux-pass Provider at boot")
+        self._prov_toggle.setStyleSheet(
+            "QCheckBox { color: #b0b0b0; font-size: 11px; spacing: 6px; }"
+            "QCheckBox::indicator { width: 36px; height: 18px; border-radius: 9px; "
+            "background: #333; border: 1px solid #555; }"
+            "QCheckBox::indicator:checked { background: #00cc66; border-color: #00cc66; }"
+            "QCheckBox::indicator:unchecked { background: #333; }"
+        )
+        self._prov_toggle.stateChanged.connect(lambda s: self._toggle_provider(s))
+        prov_row.addWidget(self._prov_toggle)
         prov_row.addStretch()
         self._prov_status = QLabel("")
         self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
@@ -137,63 +143,72 @@ class StatusDashboard(QWidget):
 
         return w
 
-    def _get_run_key(self, name: str) -> str | None:
+    def _task_exists(self, name: str) -> bool:
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                0, winreg.KEY_READ) as key:
-                value, _ = winreg.QueryValueEx(key, name)
-                return value
-        except FileNotFoundError:
-            return None
-
-    def _set_run_key(self, name: str, command: str):
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Run",
-                            0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, command)
-
-    def _del_run_key(self, name: str):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                                0, winreg.KEY_SET_VALUE) as key:
-                winreg.DeleteValue(key, name)
-        except FileNotFoundError:
-            pass
+            import subprocess
+            r = subprocess.run(["schtasks", "/Query", "/TN", name, "/V", "/FO", "CSV"],
+                               capture_output=True, text=True, timeout=5)
+            return r.returncode == 0
+        except Exception:
+            return False
 
     def _toggle_host(self, state: int):
-        vbs = os.path.join(os.path.dirname(__file__), "nexus-boot.vbs")
         if state:
-            self._set_run_key("Fauxnix Nexus", f'wscript.exe "{vbs}" //Nologo')
+            pythonw = r"C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
+            script = os.path.join(os.path.dirname(__file__), "nexus_host.py")
+            action = f'"{pythonw}" "{script}"'
+            subprocess.run([
+                "schtasks", "/Create", "/TN", "Fauxnix Nexus Host",
+                "/TR", action, "/SC", "ONLOGON", "/IT", "/F",
+            ], capture_output=True, timeout=10)
             self._host_status.setText("enabled")
             self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
         else:
-            self._del_run_key("Fauxnix Nexus")
+            subprocess.run(["schtasks", "/Delete", "/TN", "Fauxnix Nexus Host", "/F"],
+                           capture_output=True, timeout=10)
             self._host_status.setText("disabled")
             self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
 
     def _toggle_provider(self, state: int):
-        pass  # Provider is included in nexus-boot.vbs; toggle handled by _toggle_host
-
-    def _refresh_startup(self):
-        self._host_toggle.blockSignals(True)
-
-        host_val = self._get_run_key("Fauxnix Nexus")
-        if host_val:
-            self._host_toggle.setChecked(True)
-            self._host_status.setText("enabled")
-            self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
-            self._prov_status.setText("bundled")
-            self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
+        if state:
+            pythonw = r"C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
+            script = os.path.join(os.path.dirname(__file__), "..", "remote-nixos",
+                                  "faux-pass", "provider", "faux_pass_provider.py")
+            action = f'"{pythonw}" "{script}" --host 0.0.0.0 --port 4433'
+            subprocess.run([
+                "schtasks", "/Create", "/TN", "Fauxnix Faux-pass Provider",
+                "/TR", action, "/SC", "ONLOGON", "/IT", "/F",
+            ], capture_output=True, timeout=10)
+            self._prov_status.setText("enabled")
+            self._prov_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
         else:
-            self._host_toggle.setChecked(False)
-            self._host_status.setText("disabled")
-            self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
+            subprocess.run(["schtasks", "/Delete", "/TN", "Fauxnix Faux-pass Provider", "/F"],
+                           capture_output=True, timeout=10)
             self._prov_status.setText("disabled")
             self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
 
+    def _refresh_startup(self):
+        self._host_toggle.blockSignals(True)
+        self._prov_toggle.blockSignals(True)
+
+        host_ok = self._task_exists("Fauxnix Nexus Host")
+        self._host_toggle.setChecked(host_ok)
+        self._host_status.setText("enabled" if host_ok else "disabled")
+        if host_ok:
+            self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
+        else:
+            self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
+
+        prov_ok = self._task_exists("Fauxnix Faux-pass Provider")
+        self._prov_toggle.setChecked(prov_ok)
+        self._prov_status.setText("enabled" if prov_ok else "disabled")
+        if prov_ok:
+            self._prov_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
+        else:
+            self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
+
         self._host_toggle.blockSignals(False)
+        self._prov_toggle.blockSignals(False)
 
     def _uptime_widget(self) -> QWidget:
         w = QWidget()
