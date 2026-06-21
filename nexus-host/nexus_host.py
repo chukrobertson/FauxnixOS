@@ -123,7 +123,7 @@ def main():
                 pass
             if not (existing and existing.stdout.strip()):
                 subprocess.Popen(
-                    [provider_exe, "--host", "100.126.117.60", "--port", "4433"],
+                    [provider_exe, "--host", "0.0.0.0", "--port", "4433"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=_NW,
                 )
