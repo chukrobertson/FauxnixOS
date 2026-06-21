@@ -19,12 +19,12 @@ param(
     [switch]$NoHost
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
-# ── paths ──────────────────────────────────────────────────────────
+# paths
 $RepoRoot    = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $NexusHost   = Join-Path $PSScriptRoot "nexus_host.py"
-$ProviderDir = Join-Path $RepoRoot "remote-nixos" "faux-pass" "provider"
+$ProviderDir = "$RepoRoot\remote-nixos\faux-pass\provider"
 $ProviderPs1 = Join-Path $ProviderDir "start-nexus-provider.ps1"
 $ProviderCmd = Join-Path $ProviderDir "run-nexus-provider.cmd"
 $DataDir     = Join-Path $env:LOCALAPPDATA "Fauxnix"
@@ -32,34 +32,34 @@ $LogDir      = Join-Path $DataDir "logs"
 $StartupDir  = [Environment]::GetFolderPath("Startup")
 $RunKey      = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-# ── helpers ────────────────────────────────────────────────────────
+# helpers
 function Write-Step($msg) {
-    Write-Host "  → $msg" -ForegroundColor Cyan
+    Write-Host "  -> $msg" -ForegroundColor Cyan
 }
 
 function Write-Ok($msg) {
-    Write-Host "  ✔ $msg" -ForegroundColor Green
+    Write-Host "  [+] $msg" -ForegroundColor Green
 }
 
 function Write-Warn($msg) {
-    Write-Host "  ⚠ $msg" -ForegroundColor Yellow
+    Write-Host "  [!] $msg" -ForegroundColor Yellow
 }
 
-# ── header ─────────────────────────────────────────────────────────
+# header
 Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║      Fauxnix Nexus — Windows Installer       ║" -ForegroundColor Cyan
-Write-Host "╚═══════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "===========================================" -ForegroundColor Cyan
+Write-Host "     Fauxnix Nexus - Windows Installer" -ForegroundColor Cyan
+Write-Host "===========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. Directories ────────────────────────────────────────────────
+# 1. Directories
 Write-Step "Creating data and log directories..."
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir  | Out-Null
 Write-Ok "$DataDir"
 Write-Ok "$LogDir"
 
-# ── 2. Python dependencies ────────────────────────────────────────
+# 2. Python dependencies
 if (-not $NoPythonCheck) {
     Write-Step "Checking Python and dependencies..."
     $python = (Get-Command "python" -ErrorAction SilentlyContinue).Source
@@ -71,8 +71,8 @@ if (-not $NoPythonCheck) {
         Write-Warn "  Make sure 'Add Python to PATH' is checked during installation."
     } else {
         Write-Ok "Python: $python"
-        # Check PyQt6
-        $has_pyqt = & $python -c "import PyQt6; print(PyQt6.QtCore.PYQT_VERSION_STR)" 2>$null
+        $pyqt_check = & $python -c "from PyQt6.QtCore import PYQT_VERSION_STR; print(PYQT_VERSION_STR)" 2>$null
+        $has_pyqt = $pyqt_check -and $?
         if (-not $has_pyqt) {
             Write-Step "Installing PyQt6..."
             & $python -m pip install PyQt6 2>&1 | Out-Null
@@ -87,7 +87,7 @@ if (-not $NoPythonCheck) {
     }
 }
 
-# ── 3. Faux-pass provider startup ─────────────────────────────────
+# 3. Faux-pass provider startup
 if (-not $NoProvider) {
     Write-Step "Setting up Faux-pass provider at boot..."
     $providerTarget = Join-Path $StartupDir "Fauxnix Faux-pass Nexus Provider.cmd"
@@ -98,7 +98,6 @@ if (-not $NoProvider) {
         [System.IO.File]::WriteAllText($providerTarget, $content, $Utf8NoBom)
         Write-Ok "Startup shortcut: $providerTarget"
 
-        # Start it now if not already running
         $listener = netstat -ano | Select-String -Pattern "TCP\s+100\.126\.117\.60:4433\s+.*LISTENING"
         if (-not $listener) {
             Write-Step "Starting Faux-pass provider..."
@@ -118,7 +117,7 @@ if (-not $NoProvider) {
     }
 }
 
-# ── 4. Nexus Host GUI startup ─────────────────────────────────────
+# 4. Nexus Host GUI startup
 if (-not $NoHost) {
     Write-Step "Setting up Nexus Host GUI at boot..."
 
@@ -127,7 +126,6 @@ if (-not $NoHost) {
     $pythonExe = "pythonw.exe"
     $cmdLine = "$pythonExe `"$hostScript`""
 
-    # Write to Registry Run key
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     $regName = "Fauxnix Nexus Host"
     try {
@@ -144,7 +142,6 @@ if (-not $NoHost) {
         Write-Ok "Startup shortcut: $hostTarget"
     }
 
-    # Launch now
     $nexusProc = Get-Process -Name "python*" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match "nexus_host" }
     if (-not $nexusProc) {
@@ -161,15 +158,13 @@ if (-not $NoHost) {
     }
 }
 
-# ── summary ────────────────────────────────────────────────────────
+# summary
 Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║         Installation complete!               ║" -ForegroundColor Green
-Write-Host "╚═══════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "===========================================" -ForegroundColor Green
+Write-Host "        Installation complete!" -ForegroundColor Green
+Write-Host "===========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Nexus Host GUI : $PSScriptRoot\nexus_host.py" -ForegroundColor White
 Write-Host "  Faux-pass API  : http://100.126.117.60:4433/faux-pass" -ForegroundColor White
 Write-Host "  Logs           : $LogDir" -ForegroundColor White
-Write-Host ""
-Write-Host "  Use the Nexus Host UI (Status tab → Startup) to toggle boot behavior." -ForegroundColor Cyan
 Write-Host ""
