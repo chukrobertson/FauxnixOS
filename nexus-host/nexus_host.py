@@ -9,6 +9,7 @@ System tray app with:
 
 import sys
 import os
+import subprocess
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTabWidget, QSystemTrayIcon, QMenu, QMessageBox,
@@ -100,6 +101,29 @@ def main():
     tray.setContextMenu(tray_menu)
     tray.show()
 
+    # Launch faux-pass provider (check if already running first)
+    def _launch_provider():
+        if getattr(sys, 'frozen', False):
+            app_dir = os.path.dirname(sys.executable)
+        else:
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+        provider_exe = os.path.join(app_dir, "FauxnixFauxPass.exe")
+        if os.path.exists(provider_exe):
+            existing = None
+            try:
+                existing = subprocess.run(
+                    ["powershell.exe", "-Command",
+                     "Get-CimInstance Win32_Process -Filter \"Name='FauxnixFauxPass.exe'\" | Select-Object -ExpandProperty ProcessId"],
+                    capture_output=True, text=True, timeout=5
+                )
+            except Exception:
+                pass
+            if not (existing and existing.stdout.strip()):
+                subprocess.Popen(
+                    [provider_exe, "--host", "100.126.117.60", "--port", "4433"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+
     # Status check on startup
     def _startup_check():
         health = ollama_health()
@@ -109,6 +133,7 @@ def main():
         else:
             tray.setToolTip(f"{APP_NAME}\nOllama offline")
     QTimer.singleShot(1000, _startup_check)
+    QTimer.singleShot(2000, _launch_provider)
 
     sys.exit(app.exec())
 

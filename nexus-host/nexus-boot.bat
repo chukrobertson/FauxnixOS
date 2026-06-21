@@ -1,10 +1,10 @@
 @echo off
 cd /d "E:\Fauxnix\nexus-host"
 
-:: Launch Host GUI (pythonw.exe - no console)
-start /b "" "C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe" "E:\Fauxnix\nexus-host\nexus_host.py"
+:: Launch compiled Host GUI (true GUI executable - no console)
+start /b "" "E:\Fauxnix\nexus-host\dist\FauxnixNexusHost\FauxnixNexusHost.exe"
 
-:: Wait for Tailscale IP then launch provider
+:: Wait for Tailscale IP then launch compiled provider
 :retry
 ping -n 1 100.126.117.60 >nul 2>&1
 if errorlevel 1 (
@@ -12,4 +12,4 @@ if errorlevel 1 (
     goto retry
 )
 
-start /b "" "C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe" "E:\Fauxnix\remote-nixos\faux-pass\provider\faux_pass_provider.py" --host 100.126.117.60 --port 4433
+start /b "" "E:\Fauxnix\nexus-host\dist\FauxnixFauxPass\FauxnixFauxPass.exe" --host 100.126.117.60 --port 4433

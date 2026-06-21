@@ -4,3 +4,6 @@
 ssh-fauxnix.ps1
 AGENTS.md
 __pycache__/
+nexus-host/dist/
+nexus-host/build/
+*.spec
