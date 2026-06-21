@@ -123,18 +123,11 @@ class StatusDashboard(QWidget):
         host_row.addWidget(self._host_status)
         layout.addLayout(host_row)
 
-        # Faux-pass provider toggle
+        # Faux-pass provider — bundled with host toggle
         prov_row = QHBoxLayout()
-        self._prov_toggle = QCheckBox("Start Faux-pass Provider at boot")
-        self._prov_toggle.setStyleSheet(
-            "QCheckBox { color: #b0b0b0; font-size: 11px; spacing: 6px; }"
-            "QCheckBox::indicator { width: 36px; height: 18px; border-radius: 9px; "
-            "background: #333; border: 1px solid #555; }"
-            "QCheckBox::indicator:checked { background: #00cc66; border-color: #00cc66; }"
-            "QCheckBox::indicator:unchecked { background: #333; }"
-        )
-        self._prov_toggle.stateChanged.connect(lambda s: self._toggle_provider(s))
-        prov_row.addWidget(self._prov_toggle)
+        prov_label = QLabel("  + Faux-pass Provider (bundled)")
+        prov_label.setStyleSheet("color: #666; font-size: 10px;")
+        prov_row.addWidget(prov_label)
         prov_row.addStretch()
         self._prov_status = QLabel("")
         self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
@@ -153,62 +146,45 @@ class StatusDashboard(QWidget):
             return False
 
     def _toggle_host(self, state: int):
+        vbs = os.path.join(os.path.dirname(__file__), "nexus-boot.vbs")
         if state:
-            pythonw = r"C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
-            script = os.path.join(os.path.dirname(__file__), "nexus_host.py")
-            action = f'"{pythonw}" "{script}"'
             subprocess.run([
-                "schtasks", "/Create", "/TN", "Fauxnix Nexus Host",
-                "/TR", action, "/SC", "ONLOGON", "/IT", "/F",
-            ], capture_output=True, timeout=10)
+                "powershell.exe", "-Command",
+                f"Register-ScheduledTask -TaskName 'Fauxnix Nexus' -Action "
+                f"(New-ScheduledTaskAction -Execute 'wscript.exe' -Argument 'E:\\Fauxnix\\nexus-host\\nexus-boot.vbs //Nologo' -WorkingDirectory 'E:\\Fauxnix\\nexus-host') "
+                f"-Trigger (New-ScheduledTaskTrigger -AtLogOn) "
+                f"-Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable) "
+                f"-Principal (New-ScheduledTaskPrincipal -UserId '$env:USERDOMAIN\\$env:USERNAME' -LogonType Interactive -RunLevel Limited) -Force"
+            ], capture_output=True, timeout=15)
             self._host_status.setText("enabled")
             self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
         else:
-            subprocess.run(["schtasks", "/Delete", "/TN", "Fauxnix Nexus Host", "/F"],
-                           capture_output=True, timeout=10)
+            subprocess.run([
+                "powershell.exe", "-Command",
+                "Unregister-ScheduledTask -TaskName 'Fauxnix Nexus' -Confirm:$false"
+            ], capture_output=True, timeout=15)
             self._host_status.setText("disabled")
             self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
 
     def _toggle_provider(self, state: int):
-        if state:
-            pythonw = r"C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
-            script = os.path.join(os.path.dirname(__file__), "..", "remote-nixos",
-                                  "faux-pass", "provider", "faux_pass_provider.py")
-            action = f'"{pythonw}" "{script}" --host 0.0.0.0 --port 4433'
-            subprocess.run([
-                "schtasks", "/Create", "/TN", "Fauxnix Faux-pass Provider",
-                "/TR", action, "/SC", "ONLOGON", "/IT", "/F",
-            ], capture_output=True, timeout=10)
-            self._prov_status.setText("enabled")
-            self._prov_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
-        else:
-            subprocess.run(["schtasks", "/Delete", "/TN", "Fauxnix Faux-pass Provider", "/F"],
-                           capture_output=True, timeout=10)
-            self._prov_status.setText("disabled")
-            self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
+        pass  # Provider is bundled in the single VBS task with the host
 
     def _refresh_startup(self):
         self._host_toggle.blockSignals(True)
-        self._prov_toggle.blockSignals(True)
 
-        host_ok = self._task_exists("Fauxnix Nexus Host")
-        self._host_toggle.setChecked(host_ok)
-        self._host_status.setText("enabled" if host_ok else "disabled")
-        if host_ok:
+        ok = self._task_exists("Fauxnix Nexus")
+        self._host_toggle.setChecked(ok)
+        self._host_status.setText("enabled" if ok else "disabled")
+        if ok:
             self._host_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
+            self._prov_status.setText("bundled")
+            self._prov_status.setStyleSheet("color: #666; font-size: 9px; border: none;")
         else:
             self._host_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
-
-        prov_ok = self._task_exists("Fauxnix Faux-pass Provider")
-        self._prov_toggle.setChecked(prov_ok)
-        self._prov_status.setText("enabled" if prov_ok else "disabled")
-        if prov_ok:
-            self._prov_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
-        else:
+            self._prov_status.setText("disabled")
             self._prov_status.setStyleSheet("color: #888; font-size: 9px; border: none;")
 
         self._host_toggle.blockSignals(False)
-        self._prov_toggle.blockSignals(False)
 
     def _uptime_widget(self) -> QWidget:
         w = QWidget()
