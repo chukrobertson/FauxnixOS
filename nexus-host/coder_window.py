@@ -302,6 +302,7 @@ class CoderWindow(QWidget):
 
         self._stage_defs = load_stages()
         self._rebuild_stages()
+        self._scroll.setWidget(self._stages_widget)
         layout.addWidget(self._scroll, 1)
 
         self._fetch_models_async()
