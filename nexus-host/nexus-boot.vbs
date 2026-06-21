@@ -1,11 +1,11 @@
-' Fauxnix Nexus — silent boot launcher (no terminal flash)
-' Launches Host GUI + Faux-pass provider via WScript.Shell.Run with hidden window.
+' Fauxnix Nexus - silent boot launcher (zero terminal flash)
+' Uses pythonw.exe for both processes - pythonw creates no console window.
 
 Dim shell
 Set shell = CreateObject("WScript.Shell")
 
-' Launch Nexus Host GUI (pythonw.exe — already windowless)
+' Launch Nexus Host GUI (pythonw.exe - no console)
 shell.Run """C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"" ""E:\Fauxnix\nexus-host\nexus_host.py""", 0, False
 
-' Launch Faux-pass provider (powershell — hidden via Run flag 0)
-shell.Run """C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"" -WindowStyle Hidden -ExecutionPolicy Bypass -File ""E:\Fauxnix\remote-nixos\faux-pass\provider\start-nexus-provider.ps1"" -Restart", 0, False
+' Launch Faux-pass provider (pythonw.exe - no console, no powershell flash)
+shell.Run """C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"" ""E:\Fauxnix\remote-nixos\faux-pass\provider\faux_pass_provider.py"" --host 0.0.0.0 --port 4433", 0, False
