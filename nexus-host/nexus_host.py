@@ -21,19 +21,20 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from ollama_client import get_models, ollama_health
 from chat_window import ChatWindow
+from coder_window import CoderWindow
 from status_dashboard import StatusDashboard
 
 APP_NAME = "Fauxnix Nexus Host"
 
 
 class MainWindow(QWidget):
-    """Main window with tabs: Chat, Status."""
+    """Main window with tabs: Chat, Coder, Status."""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(640, 480)
-        self.resize(700, 550)
+        self.setMinimumSize(800, 600)
+        self.resize(860, 650)
         self.setStyleSheet("background: #0d0e12;")
 
         layout = QVBoxLayout(self)
@@ -50,9 +51,11 @@ class MainWindow(QWidget):
         """)
 
         self._chat = ChatWindow()
+        self._coder = CoderWindow()
         self._status = StatusDashboard()
 
         self._tabs.addTab(self._chat, "Chat")
+        self._tabs.addTab(self._coder, "Coder")
         self._tabs.addTab(self._status, "Status")
         layout.addWidget(self._tabs)
 
