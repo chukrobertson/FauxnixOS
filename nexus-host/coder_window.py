@@ -112,6 +112,7 @@ class StageCard(QFrame):
         idx = self._combo.findText(sd["model"])
         if idx >= 0:
             self._combo.setCurrentIndex(idx)
+        self._combo.currentTextChanged.connect(self._badge.setText)
         self._combo.hide()
         header.addWidget(self._combo)
 
@@ -414,7 +415,7 @@ class CoderWindow(QWidget):
 
     def _refresh_combos(self):
         for card in self._stages:
-            current = card._badge.text()
+            current = card._combo.currentText() or card._badge.text()
             card._combo.blockSignals(True)
             card._combo.clear()
             if self._models:
