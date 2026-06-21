@@ -183,9 +183,10 @@ class StatusDashboard(QWidget):
 
     def _toggle_provider(self, state: int):
         repo_root = os.path.dirname(os.path.dirname(__file__))
-        provider_ps1 = os.path.join(repo_root, "remote-nixos", "faux-pass", "provider", "run-nexus-provider.cmd")
+        provider_ps1 = os.path.join(repo_root, "remote-nixos", "faux-pass", "provider", "start-nexus-provider.ps1")
         if state:
-            self._set_run_key("Fauxnix Faux-pass Provider", f'cmd.exe /c "{provider_ps1}"')
+            cmd = f'powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "{provider_ps1}" -Restart'
+            self._set_run_key("Fauxnix Faux-pass Provider", cmd)
             self._prov_status.setText("enabled")
             self._prov_status.setStyleSheet("color: #00cc66; font-size: 9px; border: none; font-weight: bold;")
         else:
