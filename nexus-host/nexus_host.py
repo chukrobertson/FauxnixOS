@@ -101,6 +101,8 @@ def main():
     tray.setContextMenu(tray_menu)
     tray.show()
 
+    _NW = 0x08000000  # CREATE_NO_WINDOW
+
     # Launch faux-pass provider (check if already running first)
     def _launch_provider():
         if getattr(sys, 'frozen', False):
@@ -114,7 +116,8 @@ def main():
                 existing = subprocess.run(
                     ["powershell.exe", "-Command",
                      "Get-CimInstance Win32_Process -Filter \"Name='FauxnixFauxPass.exe'\" | Select-Object -ExpandProperty ProcessId"],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=_NW,
                 )
             except Exception:
                 pass
@@ -122,6 +125,7 @@ def main():
                 subprocess.Popen(
                     [provider_exe, "--host", "100.126.117.60", "--port", "4433"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=_NW,
                 )
 
     # Status check on startup

@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
+_NO_WINDOW = 0x08000000
+
 from ollama_client import get_models, ollama_health
 
 
@@ -213,6 +215,7 @@ class StatusDashboard(QWidget):
             ts_ip = subprocess.run(
                 ["tailscale", "ip", "-4"],
                 capture_output=True, text=True, timeout=5,
+                creationflags=_NO_WINDOW,
             ).stdout.strip()
         except Exception:
             ts_ip = "offline"
@@ -222,6 +225,7 @@ class StatusDashboard(QWidget):
             r = subprocess.run(
                 ["tailscale", "status"],
                 capture_output=True, text=True, timeout=5,
+                creationflags=_NO_WINDOW,
             )
             online_count = 0
             for line in r.stdout.strip().split("\n"):
