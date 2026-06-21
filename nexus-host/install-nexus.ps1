@@ -123,36 +123,30 @@ if (-not $NoProvider) {
     }
 }
 
-# 4. Nexus Host GUI startup
+# 4. Nexus boot launcher (VBS — no terminal flash)
 if (-not $NoHost) {
-    Write-Step "Setting up Nexus Host GUI at boot..."
-
-    $hostScript = Join-Path $PSScriptRoot "nexus_host.py"
-    $pythonExe = "C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
-    $cmdLine = "`"$pythonExe`" `"$hostScript`""
+    Write-Step "Setting up Nexus boot launcher..."
 
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $regName = "Fauxnix Nexus Host"
+    $regName = "Fauxnix Nexus"
+    $vbsPath = Join-Path $PSScriptRoot "nexus-boot.vbs"
+    $vbsCmd = "wscript.exe `"$vbsPath`" //Nologo"
+
     try {
-        Set-ItemProperty -Path $regPath -Name $regName -Value $cmdLine
-        Write-Ok "Registry Run key: $regName"
+        Set-ItemProperty -Path $regPath -Name $regName -Value $vbsCmd
+        Write-Ok "Registry Run key: $regName -> $vbsPath"
     } catch {
         Write-Warn "Could not write Registry Run key: $_"
-        Write-Warn "  Falling back to Startup folder shortcut."
-
-        $hostTarget = Join-Path $StartupDir "Fauxnix Nexus Host.cmd"
-        $content = "@echo off`r`nstart /b $cmdLine`r`n"
-        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-        [System.IO.File]::WriteAllText($hostTarget, $content, $Utf8NoBom)
-        Write-Ok "Startup shortcut: $hostTarget"
     }
 
     $nexusProc = Get-Process -Name "python*" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match "nexus_host" }
     if (-not $nexusProc) {
         Write-Step "Launching Nexus Host GUI..."
+        $pythonExe = "C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
+        $hostScript = Join-Path $PSScriptRoot "nexus_host.py"
         try {
-            Start-Process -FilePath "pythonw.exe" -ArgumentList "`"$hostScript`"" -WindowStyle Hidden
+            Start-Process -FilePath $pythonExe -ArgumentList "`"$hostScript`"" -WindowStyle Hidden
             Write-Ok "Nexus Host GUI launched"
         } catch {
             Write-Warn "Could not launch Nexus Host: $_"
