@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel, QFrame, QScrollArea, QCheckBox, QComboBox,
     QSpinBox, QDoubleSpinBox, QFileDialog, QListWidget, QListWidgetItem,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 from ollama_client import OLLAMA_URL
 
@@ -220,6 +220,13 @@ class StageCard(QFrame):
         self._output.clear()
 
 
+class StageSignals(QObject):
+    running = pyqtSignal(object)
+    done = pyqtSignal(object, str)
+    error = pyqtSignal(object, str)
+    skipped = pyqtSignal(object)
+
+
 class CoderWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -230,6 +237,11 @@ class CoderWindow(QWidget):
         self._running = False
         self._config_mode = False
         self._cancel_flag = threading.Event()
+        self._stage_signals = StageSignals()
+        self._stage_signals.running.connect(self._on_stage_running)
+        self._stage_signals.done.connect(self._on_stage_done)
+        self._stage_signals.error.connect(self._on_stage_error)
+        self._stage_signals.skipped.connect(self._on_stage_skipped)
         self._build_ui()
 
     def _build_ui(self):
@@ -270,6 +282,11 @@ class CoderWindow(QWidget):
         self._task_input.setMaximumHeight(70)
         self._task_input.setStyleSheet("QTextEdit { background: #141518; color: #d4d4d4; border: 1px solid #2a2d33; border-radius: 6px; padding: 8px; font-size: 12px; } QTextEdit:focus { border-color: #ff7800; }")
         layout.addWidget(self._task_input)
+
+        # Pipeline status
+        self._pipeline_status = QLabel("")
+        self._pipeline_status.setStyleSheet("color: #888; font-size: 10px; font-weight: bold;")
+        layout.addWidget(self._pipeline_status)
 
         # KB status
         self._kb_label = QLabel("")
@@ -369,6 +386,26 @@ class CoderWindow(QWidget):
             self._kb_list.takeItem(row)
             self._update_kb_label()
 
+    def _on_stage_running(self, stage: StageCard):
+        stage.set_running()
+        self._pipeline_status.setText(f"Running: {stage._label.text()} ({stage.model})")
+        self._pipeline_status.setStyleSheet("color: #00c8ff; font-size: 10px; font-weight: bold;")
+
+    def _on_stage_done(self, stage: StageCard, text: str):
+        stage.set_done(text)
+        self._pipeline_status.setText(f"Done: {stage._label.text()}")
+        self._pipeline_status.setStyleSheet("color: #00cc66; font-size: 10px; font-weight: bold;")
+        QTimer.singleShot(50, lambda: self._scroll.ensureWidgetVisible(stage, 0, 0))
+
+    def _on_stage_error(self, stage: StageCard, err: str):
+        stage.set_error(err)
+        self._pipeline_status.setText(f"Error: {stage._label.text()} - {err[:80]}")
+        self._pipeline_status.setStyleSheet("color: #ff4444; font-size: 10px; font-weight: bold;")
+        QTimer.singleShot(50, lambda: self._scroll.ensureWidgetVisible(stage, 0, 0))
+
+    def _on_stage_skipped(self, stage: StageCard):
+        stage.set_skipped()
+
     def _fetch_models_async(self):
         def fetch():
             self._models = _fetch_models()
@@ -433,22 +470,20 @@ class CoderWindow(QWidget):
             data = json.loads(resp.read())
             return data.get("response", "").strip()
 
-    def _run_stage(self, stage: StageCard, prompt: str) -> str:
+    def _run_stage(self, stage: StageCard, prompt: str, model: str, ctx: int, temp: float) -> str:
         if self._cancel_flag.is_set():
-            stage.set_skipped()
+            self._stage_signals.skipped.emit(stage)
             return ""
-        stage.set_running()
-        QTimer.singleShot(50, lambda: None)
+        self._stage_signals.running.emit(stage)
         try:
-            cfg = stage.get_config()
-            result = self._query_model(cfg["model"], prompt, cfg["num_ctx"], cfg["temperature"])
+            result = self._query_model(model, prompt, ctx, temp)
             if self._cancel_flag.is_set():
-                stage.set_skipped()
+                self._stage_signals.skipped.emit(stage)
                 return ""
-            stage.set_done(result)
+            self._stage_signals.done.emit(stage, result)
             return result
         except Exception as e:
-            stage.set_error(str(e))
+            self._stage_signals.error.emit(stage, str(e))
             return ""
 
     def _run_pipeline(self):
@@ -464,25 +499,30 @@ class CoderWindow(QWidget):
         self._task_input.setReadOnly(True)
         self._config_btn.setEnabled(False)
 
-        for stage in self._stages:
+        # Capture all stage configs upfront (main thread)
+        stage_configs = [(s, s.get_config()) for s in self._stages]
+
+        for stage, _ in stage_configs:
             stage.clear()
             stage.set_config_mode(False)
         self._kb_editor.hide()
 
+        self._pipeline_status.setText(f"Starting pipeline ({len(stage_configs)} stages)...")
+        self._pipeline_status.setStyleSheet("color: #888; font-size: 10px; font-weight: bold;")
+
+        kb_text = read_kb_files(self._kb_paths)
+
         def pipeline_thread():
-            kb_text = read_kb_files(self._kb_paths)
             context = task
             if kb_text:
                 context = f"Reference files:\n{kb_text}\n\nTask:\n{task}"
 
-            for stage in self._stages:
+            for stage, cfg in stage_configs:
                 if self._cancel_flag.is_set():
-                    break
-                cfg = stage.get_config()
-                prompt = stage.prompt_tpl.replace("{input}", context)
-                if not cfg["use_kb"]:
-                    prompt = stage.prompt_tpl.replace("{input}", task)
-                result = self._run_stage(stage, prompt)
+                    self._stage_signals.skipped.emit(stage)
+                    continue
+                prompt = stage.prompt_tpl.replace("{input}", context if cfg["use_kb"] else task)
+                result = self._run_stage(stage, prompt, cfg["model"], cfg["num_ctx"], cfg["temperature"])
                 if result:
                     context = f"Previous ({stage.stage_id}):\n{result}\n\nFull task:\n{task}"
 
@@ -497,6 +537,18 @@ class CoderWindow(QWidget):
         self._cancel_btn.setEnabled(False)
         self._task_input.setReadOnly(False)
         self._config_btn.setEnabled(True)
+
+        # Show summary in status
+        done_stages = [s for s in self._stages if "done" in s._status.text()]
+        err_stages = [s for s in self._stages if "error" in s._status.text()]
+        parts = [f"{len(done_stages)}/{len(self._stages)} stages complete"]
+        if err_stages:
+            parts.append(f"{len(err_stages)} error(s)")
+        self._pipeline_status.setText(" | ".join(parts))
+        self._pipeline_status.setStyleSheet(
+            "color: #ff4444; font-size: 10px; font-weight: bold;" if err_stages
+            else "color: #00cc66; font-size: 10px; font-weight: bold;"
+        )
 
     def _cancel_pipeline(self):
         self._cancel_flag.set()
