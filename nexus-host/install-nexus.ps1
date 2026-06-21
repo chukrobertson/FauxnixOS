@@ -90,15 +90,21 @@ if (-not $NoPythonCheck) {
 # 3. Faux-pass provider startup
 if (-not $NoProvider) {
     Write-Step "Setting up Faux-pass provider at boot..."
-    $providerTarget = Join-Path $StartupDir "Fauxnix Faux-pass Nexus Provider.cmd"
 
-    if (Test-Path -LiteralPath $ProviderCmd) {
-        $content = "@echo off`r`ncall `"$ProviderCmd`"`r`n"
-        $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-        [System.IO.File]::WriteAllText($providerTarget, $content, $Utf8NoBom)
-        Write-Ok "Startup shortcut: $providerTarget"
+    $powershellExe = "C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $providerCmdLine = "`"$powershellExe`" -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ProviderPs1`" -Restart"
 
-        $listener = netstat -ano | Select-String -Pattern "TCP\s+100\.126\.117\.60:4433\s+.*LISTENING"
+    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $regName = "Fauxnix Faux-pass Provider"
+    try {
+        Set-ItemProperty -Path $regPath -Name $regName -Value $providerCmdLine
+        Write-Ok "Registry Run key: $regName"
+    } catch {
+        Write-Warn "Could not write Registry Run key: $_"
+    }
+
+    if (Test-Path -LiteralPath $ProviderPs1) {
+        $listener = netstat -ano | Select-String -Pattern "TCP\s+0\.0\.0\.0:4433\s+.*LISTENING"
         if (-not $listener) {
             Write-Step "Starting Faux-pass provider..."
             try {
@@ -112,7 +118,7 @@ if (-not $NoProvider) {
             Write-Ok "Faux-pass provider already running"
         }
     } else {
-        Write-Warn "Provider script not found at: $ProviderCmd"
+        Write-Warn "Provider script not found at: $ProviderPs1"
         Write-Warn "  The faux-pass provider may not be available in this checkout."
     }
 }
@@ -121,10 +127,9 @@ if (-not $NoProvider) {
 if (-not $NoHost) {
     Write-Step "Setting up Nexus Host GUI at boot..."
 
-    $hostScript = $PSScriptRoot -replace '\\', '\\'
-    $hostScript = Join-Path $hostScript "nexus_host.py"
-    $pythonExe = "pythonw.exe"
-    $cmdLine = "$pythonExe `"$hostScript`""
+    $hostScript = Join-Path $PSScriptRoot "nexus_host.py"
+    $pythonExe = "C:\Users\chukr\AppData\Local\Programs\Python\Python313\pythonw.exe"
+    $cmdLine = "`"$pythonExe`" `"$hostScript`""
 
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     $regName = "Fauxnix Nexus Host"

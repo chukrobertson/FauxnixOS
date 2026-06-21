@@ -1,5 +1,5 @@
 param(
-  [string]$HostAddress = "100.126.117.60",
+  [string]$HostAddress = "0.0.0.0",
   [int]$Port = 4433,
   [string]$Token = "",
   [string]$TokenFile = "",
