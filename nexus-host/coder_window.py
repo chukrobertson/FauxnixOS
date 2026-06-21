@@ -286,30 +286,47 @@ class CoderWindow(QWidget):
         layout.addWidget(self._task_input)
 
         # Pipeline stages
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
             "QScrollBar:vertical { width: 6px; background: #0d0e12; }"
             "QScrollBar::handle:vertical { background: #2a2d33; border-radius: 3px; }"
         )
 
-        stages_widget = QWidget()
-        stages_widget.setStyleSheet("background: transparent;")
-        self._stages_layout = QVBoxLayout(stages_widget)
+        self._stages_widget = QWidget()
+        self._stages_widget.setStyleSheet("background: transparent;")
+        self._stages_layout = QVBoxLayout(self._stages_widget)
         self._stages_layout.setContentsMargins(0, 0, 0, 0)
         self._stages_layout.setSpacing(4)
 
         self._stage_defs = load_stages()
         self._rebuild_stages()
-        layout.addWidget(scroll, 1)
+        layout.addWidget(self._scroll, 1)
+
+        self._fetch_models_async()
 
     def _fetch_models_async(self):
         def fetch():
             self._models = _fetch_models()
+            QTimer.singleShot(0, self._refresh_combos)
 
         t = threading.Thread(target=fetch, daemon=True)
         t.start()
+
+    def _refresh_combos(self):
+        for card in self._stages:
+            current = card._badge.text()
+            card._combo.blockSignals(True)
+            card._combo.clear()
+            if self._models:
+                card._combo.addItems(self._models)
+            idx = card._combo.findText(current)
+            if idx >= 0:
+                card._combo.setCurrentIndex(idx)
+            elif self._models:
+                card._combo.setCurrentIndex(0)
+            card._combo.blockSignals(False)
 
     def _rebuild_stages(self):
         for card in self._stages:
