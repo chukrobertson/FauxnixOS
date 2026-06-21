@@ -38,7 +38,9 @@ DEFAULT_STAGES = [
     {"id": "snapshot", "label": "4. Snapshot", "model": "", "color": "#ffaa00", "num_ctx": 4096, "temperature": 0.5, "use_kb": False, "kind": "action", "prompt_tpl": ""},
     {"id": "apply", "label": "5. Apply", "model": "", "color": "#ff6600", "num_ctx": 4096, "temperature": 0.5, "use_kb": False, "kind": "action", "prompt_tpl": ""},
     {"id": "verify", "label": "6. Verify", "model": "minicpm-v4.6:latest", "color": "#f9c74f", "num_ctx": 8192, "temperature": 0.3, "use_kb": False, "kind": "verify", "prompt_tpl": "Review the verification output below. Check for errors, warnings, and test failures. Give a CLEAR PASS/FAIL verdict.\n\nVerification output:\n{input}"},
-    {"id": "finalizer", "label": "7. Final Review", "model": "qwen3.5:0.8b", "color": "#43aa8b", "num_ctx": 8192, "temperature": 0.5, "use_kb": True, "kind": "model", "prompt_tpl": "You are a project lead. Review the full pipeline output: plan, scrutiny, diffs, snapshot, apply result, verification. Give a CLEAR PASS/FAIL/NEEDS_REVISION verdict.\n\nFull output:\n{input}"},
+    {"id": "deploy", "label": "7. Deploy", "model": "", "color": "#aa66ff", "num_ctx": 4096, "temperature": 0.5, "use_kb": False, "kind": "action", "prompt_tpl": ""},
+    {"id": "rebuild", "label": "8. Rebuild", "model": "", "color": "#ff3399", "num_ctx": 4096, "temperature": 0.5, "use_kb": False, "kind": "action", "prompt_tpl": ""},
+    {"id": "finalizer", "label": "9. Final Review", "model": "qwen3.5:0.8b", "color": "#43aa8b", "num_ctx": 8192, "temperature": 0.5, "use_kb": True, "kind": "model", "prompt_tpl": "You are a project lead. Review the full pipeline output: plan, scrutiny, diffs, snapshot, apply, deploy, rebuild, verify. Give a CLEAR PASS/FAIL/NEEDS_REVISION verdict.\n\nFull output:\n{input}"},
 ]
 
 
@@ -50,11 +52,11 @@ def load_config() -> tuple[list[dict], list[str], dict]:
         if isinstance(data, dict):
             stages = data.get("stages", defaults)
             kb = data.get("knowledge_base", [])
-            project = data.get("project", {"root": PROJECT_ROOT, "verify_cmd": "", "auto_commit": False})
+            project = data.get("project", {"root": PROJECT_ROOT, "verify_cmd": "", "auto_commit": False, "deploy_host": "100.97.123.113", "deploy_user": "chvk", "deploy_pass": "3HCF87ftetY*", "deploy_path": "/home/chvk/Fauxnix/remote-nixos/"})
             if isinstance(stages, list) and len(stages) == len(DEFAULT_STAGES):
                 return stages, kb, project
         if isinstance(data, list) and len(data) == len(DEFAULT_STAGES):
-            return data, [], {"root": PROJECT_ROOT, "verify_cmd": "", "auto_commit": False}
+            return data, [], {"root": PROJECT_ROOT, "verify_cmd": "", "auto_commit": False, "deploy_host": "100.97.123.113", "deploy_user": "chvk", "deploy_pass": "3HCF87ftetY*", "deploy_path": "/home/chvk/Fauxnix/remote-nixos/"}
     except Exception:
         pass
     return defaults, [], {"root": PROJECT_ROOT, "verify_cmd": "", "auto_commit": False}
@@ -422,6 +424,41 @@ class CoderWindow(QWidget):
         commit_row.addStretch()
         vl.addLayout(commit_row)
 
+        vl.addWidget(QLabel("Remote Deploy (FauxnixOS laptop):"))
+        dep_host_row = QHBoxLayout()
+        dep_host_row.addWidget(QLabel("Host:"))
+        self._deploy_host = QLineEdit(self._project_cfg.get("deploy_host", "100.97.123.113"))
+        self._deploy_host.setStyleSheet("QLineEdit { background: #141518; color: #d4d4d4; border: 1px solid #2a2d33; border-radius: 3px; padding: 2px 6px; font-size: 10px; }")
+        dep_host_row.addWidget(self._deploy_host)
+        dep_host_row.addWidget(QLabel("User:"))
+        self._deploy_user = QLineEdit(self._project_cfg.get("deploy_user", "chvk"))
+        self._deploy_user.setStyleSheet("QLineEdit { background: #141518; color: #d4d4d4; border: 1px solid #2a2d33; border-radius: 3px; padding: 2px 6px; font-size: 10px; }")
+        dep_host_row.addWidget(self._deploy_user)
+        vl.addLayout(dep_host_row)
+
+        dep_path_row = QHBoxLayout()
+        dep_path_row.addWidget(QLabel("Path:"))
+        self._deploy_path = QLineEdit(self._project_cfg.get("deploy_path", "/home/chvk/Fauxnix/remote-nixos/"))
+        self._deploy_path.setStyleSheet("QLineEdit { background: #141518; color: #d4d4d4; border: 1px solid #2a2d33; border-radius: 3px; padding: 2px 6px; font-size: 10px; }")
+        dep_path_row.addWidget(self._deploy_path)
+        vl.addLayout(dep_path_row)
+
+        dep_check_row = QHBoxLayout()
+        self._deploy_cb = QCheckBox("Deploy to remote laptop after apply")
+        self._deploy_cb.setChecked(self._project_cfg.get("deploy_enabled", True))
+        self._deploy_cb.setStyleSheet("QCheckBox { color: #b0b0b0; font-size: 10px; }")
+        dep_check_row.addWidget(self._deploy_cb)
+        dep_check_row.addStretch()
+        vl.addLayout(dep_check_row)
+
+        rebuild_check_row = QHBoxLayout()
+        self._rebuild_cb = QCheckBox("Run nixos-rebuild switch after deploy")
+        self._rebuild_cb.setChecked(self._project_cfg.get("rebuild_enabled", False))
+        self._rebuild_cb.setStyleSheet("QCheckBox { color: #b0b0b0; font-size: 10px; }")
+        rebuild_check_row.addWidget(self._rebuild_cb)
+        rebuild_check_row.addStretch()
+        vl.addLayout(rebuild_check_row)
+
         w.hide()
         return w
 
@@ -536,6 +573,12 @@ class CoderWindow(QWidget):
             "root": self._root_edit.text(),
             "verify_cmd": self._verify_edit.text(),
             "auto_commit": self._auto_commit_cb.isChecked(),
+            "deploy_host": self._deploy_host.text(),
+            "deploy_user": self._deploy_user.text(),
+            "deploy_pass": "3HCF87ftetY*",
+            "deploy_path": self._deploy_path.text(),
+            "deploy_enabled": self._deploy_cb.isChecked(),
+            "rebuild_enabled": self._rebuild_cb.isChecked(),
         }
         save_config(self._stage_defs, self._kb_paths, project)
         self._project_cfg = project
@@ -637,6 +680,98 @@ class CoderWindow(QWidget):
             self._stage_signals.error.emit(stage, msg)
             return ""
 
+    _SSH = r"C:\Windows\System32\OpenSSH\ssh.exe"
+    _SCP = r"C:\Windows\System32\OpenSSH\scp.exe"
+
+    def _ssh(self, cmd: str, timeout: int = 120) -> tuple[int, str, str]:
+        host = self._project_cfg.get("deploy_host", "100.97.123.113")
+        user = self._project_cfg.get("deploy_user", "chvk")
+        askpass_bat = os.path.join(CONFIG_DIR, "_ssh_askpass.bat")
+        try:
+            with open(askpass_bat, "w") as f:
+                f.write(f"@echo {self._project_cfg.get('deploy_pass', '3HCF87ftetY*')}")
+            env = os.environ.copy()
+            env["SSH_ASKPASS"] = askpass_bat
+            env["SSH_ASKPASS_REQUIRE"] = "force"
+            env["DISPLAY"] = "dummy"
+            r = subprocess.run(
+                [self._SSH, "-o", "StrictHostKeyChecking=no", "-o", "PasswordAuthentication=yes",
+                 "-o", "PreferredAuthentications=password", f"{user}@{host}", cmd],
+                capture_output=True, text=True, timeout=timeout, env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            return r.returncode, r.stdout, r.stderr
+        except Exception as e:
+            return -1, "", str(e)
+
+    def _scp(self, local: str, remote: str, timeout: int = 60) -> tuple[int, str, str]:
+        host = self._project_cfg.get("deploy_host", "100.97.123.113")
+        user = self._project_cfg.get("deploy_user", "chvk")
+        askpass_bat = os.path.join(CONFIG_DIR, "_ssh_askpass.bat")
+        try:
+            with open(askpass_bat, "w") as f:
+                f.write(f"@echo {self._project_cfg.get('deploy_pass', '3HCF87ftetY*')}")
+            env = os.environ.copy()
+            env["SSH_ASKPASS"] = askpass_bat
+            env["SSH_ASKPASS_REQUIRE"] = "force"
+            env["DISPLAY"] = "dummy"
+            r = subprocess.run(
+                [self._SCP, "-o", "StrictHostKeyChecking=no", "-o", "PasswordAuthentication=yes",
+                 "-o", "PreferredAuthentications=password", "-r", local, f"{user}@{host}:{remote}"],
+                capture_output=True, text=True, timeout=timeout, env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            return r.returncode, r.stdout, r.stderr
+        except Exception as e:
+            return -1, "", str(e)
+
+    def _run_stage_deploy(self, stage: StageCard, diffs: list[StageCard]) -> str:
+        if not self._project_cfg.get("deploy_enabled"):
+            self._stage_signals.skipped.emit(stage)
+            return ""
+        self._stage_signals.running.emit(stage)
+
+        files = set()
+        for d in diffs:
+            files.update(_parse_file_list(d.output_text))
+        if not files:
+            msg = "No files to deploy."
+            self._stage_signals.detail.emit(stage, msg)
+            self._stage_signals.done.emit(stage, msg)
+            return msg
+
+        root = self._project_cfg.get("root", PROJECT_ROOT)
+        deploy_path = self._project_cfg.get("deploy_path", "/home/chvk/Fauxnix/remote-nixos/")
+        results = []
+        for f in sorted(files):
+            local_path = os.path.join(root, f) if not os.path.isabs(f) else f
+            remote_path = deploy_path.rstrip("/") + "/" + f.replace("\\", "/")
+            rc, out, err = self._scp(local_path, remote_path)
+            if rc == 0:
+                results.append(f"OK: {f}")
+            else:
+                results.append(f"FAIL: {f} - {err[:100]}")
+        result = "\n".join(results)
+        self._stage_signals.detail.emit(stage, result)
+        self._stage_signals.done.emit(stage, f"Deploy: {sum(1 for r in results if r.startswith('OK'))}/{len(results)} files")
+        return result
+
+    def _run_stage_rebuild(self, stage: StageCard) -> str:
+        if not self._project_cfg.get("rebuild_enabled"):
+            self._stage_signals.skipped.emit(stage)
+            return ""
+        self._stage_signals.running.emit(stage)
+        rc, out, err = self._ssh("sudo nixos-rebuild switch 2>&1 | tail -20", timeout=300)
+        detail = f"exit={rc}\n{out[:1000]}"
+        if err:
+            detail += f"\nstderr:\n{err[:500]}"
+        self._stage_signals.detail.emit(stage, detail)
+        if rc == 0:
+            self._stage_signals.done.emit(stage, f"Rebuild SUCCEEDED (exit {rc})")
+        else:
+            self._stage_signals.done.emit(stage, f"Rebuild FAILED (exit {rc})")
+        return detail
+
     def _run_stage_verify(self, stage: StageCard) -> str:
         self._stage_signals.running.emit(stage)
         root = self._project_cfg.get("root", PROJECT_ROOT)
@@ -679,12 +814,15 @@ class CoderWindow(QWidget):
             prompt = stage.prompt_tpl.replace("{input}", context)
             return self._run_stage_model(stage, prompt, cfg["model"], cfg["num_ctx"], cfg["temperature"])
         elif stage.kind == "action":
+            diffs = [s for s, _ in stage_configs if s.stage_id == "diff_generator"]
             if stage.stage_id == "snapshot":
-                diffs = [s for s, _ in stage_configs if s.stage_id == "diff_generator"]
                 return self._run_stage_snapshot(stage, diffs)
             elif stage.stage_id == "apply":
-                diffs = [s for s, _ in stage_configs if s.stage_id == "diff_generator"]
                 return self._run_stage_apply(stage, diffs)
+            elif stage.stage_id == "deploy":
+                return self._run_stage_deploy(stage, diffs)
+            elif stage.stage_id == "rebuild":
+                return self._run_stage_rebuild(stage)
         elif stage.kind == "verify":
             return self._run_stage_verify(stage)
         return ""
