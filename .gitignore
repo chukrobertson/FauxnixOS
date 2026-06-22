@@ -2,6 +2,7 @@
 *.mp4
 *.iso
 *.pkg
+BIT*.tmp
 nssm.exe
 ssh-fauxnix.ps1
 AGENTS.md
