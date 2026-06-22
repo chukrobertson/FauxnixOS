@@ -2243,6 +2243,9 @@ in
   imports =
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
+      (import ./wayfire.nix {
+        inherit fauxd fauxnixCanvas fauxnixRofi fauxnixThreadLauncher;
+      })
     ];
 
   # Bootloader.
@@ -2301,8 +2304,8 @@ in
     Fauxdex is your bounded workspace loop: observe, plan, inspect, propose, verify, and summarize.
     Faux-pass is the pass-through app provider registry, not a password manager. Use `faux-pass status`, `faux-pass apps`, and `faux-pass run <app>` for local/remote app provider state.
     Visual memory snapshots are captured with `fauxnix-screenshot`; screenshots are stored under ${fauxnixSnapshots}/screenshots.
-    Display modes are managed through GNOME Settings or `gsettings`; do not use Sway commands on this profile.
-    The current desktop target is a fresh Nix-owned GDM+GNOME profile with macOS-style WhiteSur theming. Propose Nix patches, build before switching, and keep rollback notes.
+    Display modes are managed through Wayfire and wlroots-compatible tools; use local evidence before changing compositor state.
+    The current desktop target is a Nix-owned SDDM+Wayfire profile that autostarts the Fauxnix workspace. Propose Nix patches, build before switching, and keep rollback notes.
     For heavy reasoning, long code work, or large-context tasks, suggest escalating to the parent node.
     """
   '';
@@ -2665,82 +2668,51 @@ in
     LC_TIME = "en_US.UTF-8";
   };
 
-  # Fresh desktop base: GNOME on GDM, with a macOS-style WhiteSur look.
+  # Fauxnix Wayfire workspace profile. SDDM auto-login starts Wayfire, and
+  # Wayfire autostarts the PyQt workspace through ./wayfire.nix.
   services.xserver.enable = true;
   services.displayManager.gdm = {
-    enable = true;
+    enable = false;
   };
-  services.desktopManager.gnome.enable = true;
-  services.displayManager.defaultSession = "gnome";
+  services.desktopManager.gnome.enable = false;
+  services.displayManager.sddm = {
+    enable = true;
+    wayland.enable = false;
+    theme = "fauxnix-login-v2";
+    settings.General.GreeterEnvironment = "QML_DISABLE_DISK_CACHE=1";
+    settings.Theme = {
+      Current = "fauxnix-login-v2";
+      ThemeDir = "/run/current-system/sw/share/sddm/themes";
+    };
+    settings.Autologin = {
+      User = "chvk";
+      Session = "wayfire";
+    };
+  };
+  environment.etc."sddm.conf.d/fauxnix-theme.conf".text = ''
+    [General]
+    GreeterEnvironment=QML_DISABLE_DISK_CACHE=1
+
+    [Theme]
+    Current=fauxnix-login-v2
+    ThemeDir=/run/current-system/sw/share/sddm/themes
+
+    [Autologin]
+    User=chvk
+    Session=wayfire
+  '';
+  services.displayManager.defaultSession = "wayfire";
   services.displayManager.autoLogin = {
     enable = true;
     user = "chvk";
   };
 
-  programs.dconf.enable = true;
-  programs.dconf.profiles.user.databases = [
-    {
-      settings = {
-        "org/gnome/desktop/interface" = {
-          gtk-theme = "WhiteSur-Dark";
-          icon-theme = "WhiteSur";
-          cursor-theme = "Bibata-Modern-Ice";
-          color-scheme = "prefer-dark";
-          clock-show-weekday = true;
-          show-battery-percentage = true;
-          enable-hot-corners = false;
-        };
-        "org/gnome/desktop/wm/preferences" = {
-          button-layout = "close,minimize,maximize:";
-          focus-mode = "click";
-        };
-        "org/gnome/shell" = {
-          enabled-extensions = [
-            "appindicatorsupport@rgcjonas.gmail.com"
-            "blur-my-shell@aunetx"
-            "dash-to-dock@micxgx.gmail.com"
-            "just-perfection-desktop@just-perfection"
-            "user-theme@gnome-shell-extensions.gcampax.github.com"
-          ];
-          favorite-apps = [
-            "firefox.desktop"
-            "fennix.desktop"
-            "fauxnix-archivist.desktop"
-            "org.gnome.Nautilus.desktop"
-            "Alacritty.desktop"
-            "codium.desktop"
-            "org.gnome.Settings.desktop"
-          ];
-        };
-        "org/gnome/shell/extensions/user-theme" = {
-          name = "WhiteSur-Dark";
-        };
-        "org/gnome/shell/extensions/dash-to-dock" = {
-          dock-position = "BOTTOM";
-          extend-height = false;
-          dock-fixed = true;
-          dash-max-icon-size = lib.gvariant.mkInt32 48;
-          transparency-mode = "DYNAMIC";
-          click-action = "minimize-or-previews";
-          show-trash = false;
-          show-mounts = false;
-        };
-        "org/gnome/shell/extensions/just-perfection" = {
-          panel = true;
-          activities-button = false;
-          search = true;
-          startup-status = lib.gvariant.mkInt32 0;
-          workspace-popup = false;
-        };
-      };
-    }
-  ];
-
   xdg.portal = {
     enable = true;
+    config.common.default = "*";
     extraPortals = with pkgs; [
-      xdg-desktop-portal-gnome
       xdg-desktop-portal-gtk
+      xdg-desktop-portal-wlr
     ];
   };
 
@@ -2825,6 +2797,8 @@ in
     fauxnixGit
     fauxnixCanvas
     fauxnixNode
+    fauxnixRofi
+    fauxnixThreadLauncher
     fauxPass
     fauxnixScreenshot
     fauxnixSettings
@@ -2840,6 +2814,11 @@ in
     swtpm
     usbutils
     OVMF.fd
+    wayfire
+    waybar
+    wl-clipboard
+    wlrctl
+    xwayland
     # ── application suite ──
     gimp
     krita
