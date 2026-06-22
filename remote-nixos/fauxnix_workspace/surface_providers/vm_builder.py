@@ -101,13 +101,13 @@ def build_qemu_argv(spec: VMSpec) -> list[str]:
     _add(argv, "-drive", f"if=pflash,format=raw,readonly=on,file={spec.ovmf_code}")
     _add(argv, "-drive", f"if=pflash,format=raw,file={spec.ovmf_vars}")
 
-    # Drives
-    for d in _drives(spec):
-        _add(argv, "-drive", d)
+    # Drives / storage devices
+    _add_storage(argv, spec)
 
-    # Network. macOS has native Intel e1000 support; VirtIO depends on
-    # additional guest drivers and is a worse default for first boot.
-    net_device = "e1000-82545em" if spec.kind == "macos" else "virtio-net-pci"
+    # Network. macOS Recovery usually has native VMware vmxnet3 support, while
+    # VirtIO needs guest drivers and old Intel e1000 variants are unreliable on
+    # modern installers.
+    net_device = "vmxnet3" if spec.kind == "macos" else "virtio-net-pci"
     net_device = f"{net_device},netdev={spec.netdev_id}"
     if spec.mac_address:
         net_device = f"{net_device},mac={spec.mac_address}"
@@ -362,30 +362,58 @@ def _cpu(spec: VMSpec) -> str:
     return "host"
 
 
+def _add_storage(argv: list[str], spec: VMSpec) -> None:
+    if spec.kind == "macos":
+        _add_macos_sata_storage(argv, spec)
+        return
+
+    for d in _drives(spec):
+        _add(argv, "-drive", d)
+
+
+def _add_macos_sata_storage(argv: list[str], spec: VMSpec) -> None:
+    _add(argv, "-device", "ich9-ahci,id=sata")
+
+    if spec.installer_iso:
+        _add(
+            argv,
+            "-drive",
+            f"id=MacInstaller,if=none,format=raw,snapshot=on,file={spec.installer_iso}",
+        )
+        _add(argv, "-device", "ide-hd,bus=sata.0,drive=MacInstaller")
+
+    if spec.opencore_iso:
+        bus_index = 1 if spec.installer_iso else 0
+        _add(
+            argv,
+            "-drive",
+            f"id=OpenCore,if=none,format=raw,file={spec.opencore_iso},media=cdrom",
+        )
+        _add(
+            argv,
+            "-device",
+            f"ide-cd,bus=sata.{bus_index},drive=OpenCore,bootindex=1",
+        )
+
+    _add(
+        argv,
+        "-drive",
+        f"id=MacDisk,if=none,format={spec.disk_format},file={spec.disk_path}",
+    )
+    _add(argv, "-device", "ide-hd,bus=sata.2,drive=MacDisk")
+
+
 def _drives(spec: VMSpec) -> list[str]:
     drives: list[str] = []
 
-    if spec.kind == "macos":
-        # Mirror the working VMware layout: macOS installer in DVD slot 1,
-        # OpenCore/helper ISO in DVD slot 2.
-        if spec.installer_iso:
-            drives.append(
-                f"file={spec.installer_iso},format=raw,if=ide,index=0,media=cdrom"
-            )
-        if spec.opencore_iso:
-            opencore_index = 1 if spec.installer_iso else 0
-            drives.append(
-                f"file={spec.opencore_iso},format=raw,if=ide,index={opencore_index},media=cdrom"
-            )
-    else:
-        if spec.opencore_iso:
-            drives.append(
-                f"file={spec.opencore_iso},format=raw,if=ide,index=0,media=cdrom"
-            )
-        if spec.installer_iso:
-            drives.append(
-                f"file={spec.installer_iso},format=raw,if=ide,index=1,media=cdrom"
-            )
+    if spec.opencore_iso:
+        drives.append(
+            f"file={spec.opencore_iso},format=raw,if=ide,index=0,media=cdrom"
+        )
+    if spec.installer_iso:
+        drives.append(
+            f"file={spec.installer_iso},format=raw,if=ide,index=1,media=cdrom"
+        )
 
     # Windows: virtio drivers ISO
     if spec.virtio_iso:

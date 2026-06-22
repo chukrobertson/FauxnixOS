@@ -3,9 +3,12 @@ set -euo pipefail
 
 OC_ISO_URL="https://github.com/LongQT-sea/OpenCore-ISO/releases/download/v0.7/LongQT-OpenCore-v0.7.iso"
 OC_ISO="LongQT-OpenCore-v0.7.iso"
-DISK="macos-disk.qcow2"
-DISK_SIZE="80"
+DISK="${DISK:-macos-disk.qcow2}"
+DISK_SIZE="${DISK_SIZE:-80}"
 DEFAULT_TAILSCALE_IP="100.97.123.113"
+MEMORY_MB="${MEMORY_MB:-8192}"
+SMP_CORES="${SMP_CORES:-4}"
+NET_DEVICE="${NET_DEVICE:-vmxnet3}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -131,7 +134,7 @@ if [ -n "$MISSING" ]; then
 fi
 
 OVMF_VARS="./OVMF_VARS.fd"
-if [ ! -f "$OVMF_VARS" ]; then
+if [ "${RESET_OVMF_VARS:-0}" = "1" ] || [ ! -f "$OVMF_VARS" ]; then
   cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
   chmod u+w "$OVMF_VARS"
 fi
@@ -144,6 +147,12 @@ VNC_DISPLAY="${VNC_DISPLAY:-1}"
 VNC_LISTEN="$(detect_vnc_listen)"
 VNC_PORT="$((5900 + VNC_DISPLAY))"
 VNC_TARGET="${VNC_LISTEN}:${VNC_DISPLAY}"
+INSTALLER_BOOTINDEX=""
+OPENCORE_BOOTINDEX=",bootindex=1"
+if [ "${BOOT_INSTALLER:-0}" = "1" ]; then
+  INSTALLER_BOOTINDEX=",bootindex=1"
+  OPENCORE_BOOTINDEX=""
+fi
 
 if [ ! -f "$OC_ISO" ]; then
   echo -e "${YELLOW}Downloading OpenCore ISO for QEMU...${NC}"
@@ -156,6 +165,10 @@ fi
 MACOS_ISO="${MACOS_ISO:-}"
 if [ -n "$MACOS_ISO" ] && [ -f "$MACOS_ISO" ]; then
   :
+elif [ -f "BaseSystem-Sequoia.raw" ]; then
+  MACOS_ISO="BaseSystem-Sequoia.raw"
+elif [ -f "$HOME/BaseSystem-Sequoia.raw" ]; then
+  MACOS_ISO="$HOME/BaseSystem-Sequoia.raw"
 elif [ -f "macOS-Sequoia-15.7.7.iso" ]; then
   MACOS_ISO="macOS-Sequoia-15.7.7.iso"
 elif [ -f "macOS-Sequoia.iso" ]; then
@@ -192,18 +205,29 @@ echo "Use Disk Utility to format the virtual disk as APFS,"
 echo "then install macOS normally. It will reboot a few times."
 echo ""
 echo "TigerVNC: connect from Windows to ${VNC_LISTEN}:${VNC_PORT}"
+echo "Resources: ${MEMORY_MB} MB RAM, ${SMP_CORES} cores"
+echo "Network: ${NET_DEVICE}"
+if [ "${BOOT_INSTALLER:-0}" = "1" ]; then
+  echo "Boot target: macOS installer image"
+else
+  echo "Boot target: OpenCore helper"
+fi
 echo ""
 
 qemu-system-x86_64 \
   -machine q35,accel=kvm \
   -cpu host,vendor=GenuineIntel,+invtsc,vmware-cpuid-freq=on \
-  -smp 4 -m 8192 \
+  -smp "$SMP_CORES" -m "$MEMORY_MB" \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file="$MACOS_ISO",format=raw,if=ide,index=0,media=cdrom \
-  -drive file="$OC_ISO",format=raw,if=ide,index=1,media=cdrom \
-  -drive file="$DISK",format=qcow2,if=ide,index=2,media=disk \
-  -device e1000-82545em,netdev=net0 \
+  -device ich9-ahci,id=sata \
+  -drive id=MacInstaller,if=none,format=raw,snapshot=on,file="$MACOS_ISO" \
+  -device ide-hd,bus=sata.0,drive=MacInstaller"${INSTALLER_BOOTINDEX}" \
+  -drive id=OpenCore,if=none,format=raw,file="$OC_ISO",media=cdrom \
+  -device ide-cd,bus=sata.1,drive=OpenCore"${OPENCORE_BOOTINDEX}" \
+  -drive id=MacDisk,if=none,format=qcow2,file="$DISK" \
+  -device ide-hd,bus=sata.2,drive=MacDisk \
+  -device "$NET_DEVICE",netdev=net0 \
   -netdev user,id=net0 \
   -device usb-tablet \
   -usb \

@@ -47,10 +47,14 @@ qemu-system-x86_64 ^
   -cpu host,vendor=GenuineIntel,+invtsc,vmware-cpuid-freq=on ^
   -smp 4 -m 8192 ^
   -drive if=pflash,format=raw,readonly=on,file="C:\Program Files\qemu\share\edk2-x86_64-code.fd" ^
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom ^
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom ^
-  -drive file=macos-disk.qcow2,format=qcow2,if=virtio ^
-  -device virtio-net-pci,netdev=net0 ^
+  -device ich9-ahci,id=sata ^
+  -drive id=MacInstaller,if=none,format=raw,snapshot=on,file=BaseSystem-Sequoia.raw ^
+  -device ide-hd,bus=sata.0,drive=MacInstaller ^
+  -drive id=OpenCore,if=none,format=raw,file=LongQT-OpenCore-v0.7.iso,media=cdrom ^
+  -device ide-cd,bus=sata.1,drive=OpenCore,bootindex=1 ^
+  -drive id=MacDisk,if=none,format=qcow2,file=macos-disk.qcow2 ^
+  -device ide-hd,bus=sata.2,drive=MacDisk ^
+  -device vmxnet3,netdev=net0 ^
   -netdev user,id=net0 ^
   -display gtk
 ```

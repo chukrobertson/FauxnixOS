@@ -23,8 +23,10 @@ The script will:
 - Prompt for the macOS ISO path (or find it in the current dir)
 - Create an 80 GB virtual disk (`macos-disk.qcow2`)
 - Boot the VM and expose it over VNC for TigerVNC
-- Mount the macOS installer ISO as DVD slot 1 and the OpenCore helper ISO as
-  DVD slot 2; this keeps the OpenCore picker from showing only utility entries.
+- Attach the macOS installer image as snapshot-backed SATA block media on slot
+  1 and the OpenCore helper ISO as SATA DVD media on slot 2, then boot OpenCore
+  from that second slot. The Sequoia image is Apple-partitioned 512-byte media,
+  not a normal ISO9660 optical disc.
 
 By default on the Fauxnix ThinkPad, TigerVNC should connect to:
 
@@ -34,7 +36,13 @@ By default on the Fauxnix ThinkPad, TigerVNC should connect to:
 
 Override with `VNC_LISTEN=<ip>` and `VNC_DISPLAY=<n>` if needed.
 Set `MACOS_ISO=<path>` to force a specific installer ISO; on Fauxnix the script
-also checks `/home/chvk/macOS-Sequoia-15.7.7.iso`.
+prefers `/home/chvk/BaseSystem-Sequoia.raw` when present, then falls back to
+`/home/chvk/macOS-Sequoia-15.7.7.iso`.
+The VM defaults to 8192 MB RAM, 4 cores, and a `vmxnet3` NIC. Override with
+`MEMORY_MB=<mb>`, `SMP_CORES=<n>`, or `NET_DEVICE=<qemu-device>` if needed.
+The backing disk file defaults to `macos-disk.qcow2`; the macOS volume inside
+that disk can be named `MacOSVM` in Disk Utility. Override the file path with
+`DISK=<path>` only if you intentionally want a different qcow2.
 
 ---
 
@@ -99,10 +107,14 @@ qemu-system-x86_64 \
   -smp 4 -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom \
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom \
-  -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
-  -device e1000-82545em,netdev=net0 \
+  -device ich9-ahci,id=sata \
+  -drive id=MacInstaller,if=none,format=raw,snapshot=on,file=BaseSystem-Sequoia.raw \
+  -device ide-hd,bus=sata.0,drive=MacInstaller \
+  -drive id=OpenCore,if=none,format=raw,file=LongQT-OpenCore-v0.7.iso,media=cdrom \
+  -device ide-cd,bus=sata.1,drive=OpenCore,bootindex=1 \
+  -drive id=MacDisk,if=none,format=qcow2,file=macos-disk.qcow2 \
+  -device ide-hd,bus=sata.2,drive=MacDisk \
+  -device vmxnet3,netdev=net0 \
   -netdev user,id=net0 \
   -vnc 100.97.123.113:1
 ```
@@ -118,10 +130,14 @@ qemu-system-x86_64 \
   -smp 4 -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom \
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom \
-  -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
-  -device e1000-82545em,netdev=net0 \
+  -device ich9-ahci,id=sata \
+  -drive id=MacInstaller,if=none,format=raw,snapshot=on,file=BaseSystem-Sequoia.raw \
+  -device ide-hd,bus=sata.0,drive=MacInstaller \
+  -drive id=OpenCore,if=none,format=raw,file=LongQT-OpenCore-v0.7.iso,media=cdrom \
+  -device ide-cd,bus=sata.1,drive=OpenCore,bootindex=1 \
+  -drive id=MacDisk,if=none,format=qcow2,file=macos-disk.qcow2 \
+  -device ide-hd,bus=sata.2,drive=MacDisk \
+  -device vmxnet3,netdev=net0 \
   -netdev user,id=net0 \
   -vnc 100.97.123.113:1
 ```
