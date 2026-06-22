@@ -678,6 +678,7 @@ def create_desktop():
     w._add_node = _add_node
     w._auto_save = _auto_save
     w._new_tab = _new_tab
+    w._update_tab_buttons = _update_tab_buttons
 
     # Auto-save every 30 seconds
     save_timer = QTimer(w)

@@ -37,16 +37,7 @@ let
       mkdir -p $out/lib/fauxnix_workspace/nodes
       cp $src/nodes/__init__.py $out/lib/fauxnix_workspace/nodes/
       cp $src/nodes/node_types.py $out/lib/fauxnix_workspace/nodes/
-      mkdir -p $out/lib/fauxnix_workspace/surface_providers
-      cp $src/surface_providers/__init__.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/base.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/fauxpass_app.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/registry.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/xwayland_per_app.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/test_xwayland.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/test_app_card.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/test_app_launcher.py $out/lib/fauxnix_workspace/surface_providers/
-      cp $src/surface_providers/test_input.py $out/lib/fauxnix_workspace/surface_providers/
+      cp -r $src/surface_providers $out/lib/fauxnix_workspace/
       mkdir -p $out/lib/fauxnix_workspace/examples
       cp $src/examples/*.json $out/lib/fauxnix_workspace/examples/
     '';
@@ -96,6 +87,8 @@ let
     text = ''
       export QT_QPA_PLATFORM=xcb
       export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+      export FAUXNIX_OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+      export FAUXNIX_OVMF_VARS="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
       export PYTHONPATH="${workspaceLib}/lib''${PYTHONPATH:+:$PYTHONPATH}"
       exec ${workspacePython}/bin/python3 -m fauxnix_workspace "$@"
     '';
@@ -2797,7 +2790,7 @@ in
   users.users."chvk" = {
     isNormalUser = true;
     description = "Chvk";
-    extraGroups = [ "networkmanager" "wheel" "video" ];
+    extraGroups = [ "networkmanager" "wheel" "video" "kvm" ];
     packages = with pkgs; [
     #  thunderbird
     ];
@@ -2830,6 +2823,8 @@ in
     fauxfetch
     fauxnixFetch
     fauxnixGit
+    fauxnixCanvas
+    fauxnixNode
     fauxPass
     fauxnixScreenshot
     fauxnixSettings
@@ -2839,9 +2834,12 @@ in
     mesa-demos
     pciutils
     pavucontrol
+    qemu_full
     ripgrep
     rsync
+    swtpm
     usbutils
+    OVMF.fd
     # ── application suite ──
     gimp
     krita

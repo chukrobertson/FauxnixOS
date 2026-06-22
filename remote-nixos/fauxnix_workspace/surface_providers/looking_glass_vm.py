@@ -16,26 +16,24 @@ from __future__ import annotations
 import json
 import os
 import socket
-import struct
 import subprocess
 import tempfile
 import time
 from pathlib import Path
-from threading import Thread, Event
 
 from .base import SurfaceProvider, InputEvent
 
 
 # Maps a printable character to a QMP QKeyCode string.
-_CHAR_TO_QCODE: dict[str, str] = {
-    # lowercase
+# Simple chars map to a single qcode string.
+# Uppercase/shifted chars map to (shift_qcode, char_qcode) tuple.
+_CHAR_TO_QCODE: dict[str, str | tuple[str, str]] = {
     'a': 'key_a', 'b': 'key_b', 'c': 'key_c', 'd': 'key_d', 'e': 'key_e',
     'f': 'key_f', 'g': 'key_g', 'h': 'key_h', 'i': 'key_i', 'j': 'key_j',
     'k': 'key_k', 'l': 'key_l', 'm': 'key_m', 'n': 'key_n', 'o': 'key_o',
     'p': 'key_p', 'q': 'key_q', 'r': 'key_r', 's': 'key_s', 't': 'key_t',
     'u': 'key_u', 'v': 'key_v', 'w': 'key_w', 'x': 'key_x', 'y': 'key_y',
     'z': 'key_z',
-    # uppercase
     'A': ('key_shift', 'key_a'), 'B': ('key_shift', 'key_b'),
     'C': ('key_shift', 'key_c'), 'D': ('key_shift', 'key_d'),
     'E': ('key_shift', 'key_e'), 'F': ('key_shift', 'key_f'),
@@ -49,16 +47,13 @@ _CHAR_TO_QCODE: dict[str, str] = {
     'U': ('key_shift', 'key_u'), 'V': ('key_shift', 'key_v'),
     'W': ('key_shift', 'key_w'), 'X': ('key_shift', 'key_x'),
     'Y': ('key_shift', 'key_y'), 'Z': ('key_shift', 'key_z'),
-    # digits
     '0': 'key_0', '1': 'key_1', '2': 'key_2', '3': 'key_3', '4': 'key_4',
     '5': 'key_5', '6': 'key_6', '7': 'key_7', '8': 'key_8', '9': 'key_9',
-    # symbols
     ' ': 'key_space', '\n': 'key_ret', '\t': 'key_tab',
     '-': 'key_minus', '=': 'key_equal', '[': 'key_bracket_left',
     ']': 'key_bracket_right', '\\': 'key_backslash', ';': 'key_semicolon',
     "'": 'key_apostrophe', '`': 'key_grave_accent', ',': 'key_comma',
     '.': 'key_dot', '/': 'key_slash',
-    # shifted symbols
     '~': ('key_shift', 'key_grave_accent'),
     '!': ('key_shift', 'key_1'), '@': ('key_shift', 'key_2'),
     '#': ('key_shift', 'key_3'), '$': ('key_shift', 'key_4'),
@@ -76,17 +71,123 @@ _CHAR_TO_QCODE: dict[str, str] = {
     '?': ('key_shift', 'key_slash'),
 }
 
-# Maps QEMU QKeyCode strings to QMP key names (without the 'key_' prefix).
-_QCODE_TO_NAME: dict[str, str] = {}
-# Will be populated below module init trick or lazily.
-
-# Buttons: InputEvent.button (1=left, 2=middle, 3=right) → QMP button name
 _BUTTON_MAP = {1: 'left', 2: 'middle', 3: 'right'}
 
 
 def _qcode_name(qcode: str) -> str:
-    """Strip 'key_' prefix from a QKeyCode string."""
     return qcode[4:] if qcode.startswith('key_') else qcode
+
+
+# X11 keycode → QEMU QKeyCode (US keyboard layout)
+# X11 keycodes as returned by Qt's nativeScanCode() under XCB/XWayland.
+# Based on xfree86 keycode conventions.
+_X11_TO_QCODE: dict[int, str] = {
+    9: 'esc',
+    10: '1', 11: '2', 12: '3', 13: '4', 14: '5',
+    15: '6', 16: '7', 17: '8', 18: '9', 19: '0',
+    20: 'minus', 21: 'equal',
+    22: 'backspace',
+    23: 'tab',
+    24: 'q', 25: 'w', 26: 'e', 27: 'r', 28: 't',
+    29: 'y', 30: 'u', 31: 'i', 32: 'o', 33: 'p',
+    34: 'bracket_left', 35: 'bracket_right',
+    36: 'ret',
+    37: 'ctrl',
+    38: 'a', 39: 's', 40: 'd', 41: 'f', 42: 'g',
+    43: 'h', 44: 'j', 45: 'k', 46: 'l',
+    47: 'semicolon', 48: 'apostrophe',
+    49: 'grave_accent',
+    50: 'shift',
+    51: 'backslash',
+    52: 'z', 53: 'x', 54: 'c', 55: 'v', 56: 'b',
+    57: 'n', 58: 'm',
+    59: 'comma', 60: 'dot', 61: 'slash',
+    62: 'shift_r',
+    63: 'kp_multiply',
+    64: 'alt',
+    65: 'space',
+    66: 'caps_lock',
+    67: 'f1', 68: 'f2', 69: 'f3', 70: 'f4', 71: 'f5',
+    72: 'f6', 73: 'f7', 74: 'f8', 75: 'f9', 76: 'f10',
+    95: 'f11', 96: 'f12',
+    103: 'kp_7', 104: 'kp_8', 105: 'kp_9',
+    106: 'kp_divide',
+    107: 'kp_4', 108: 'kp_5', 109: 'kp_6',
+    110: 'kp_multiply',  # actually depends; 110 can be home too
+    111: 'up',
+    112: 'page_up',
+    113: 'left',
+    114: 'right',
+    115: 'end',
+    116: 'down',
+    117: 'page_down',
+    118: 'insert',
+    119: 'delete',
+    133: 'meta',     # Super_L
+    134: 'meta_r',   # Super_R
+}
+
+# Qt::Key value → QKeyCode (for key_release events where key may be a Qt enum)
+_QT_KEY_TO_QCODE: dict[int, str] = {
+    0x01000020: 'shift',     # Qt::Key_Shift
+    0x01000021: 'ctrl',      # Qt::Key_Control
+    0x01000022: 'meta',      # Qt::Key_Meta
+    0x01000023: 'alt',       # Qt::Key_Alt
+    0x01000024: 'alt_r',     # Qt::Key_AltGr
+    0x01000025: 'meta_r',    # Qt::Key_Super_L
+    0x01000026: 'meta_r',    # Qt::Key_Super_R
+    0x01000041: 'caps_lock', # Qt::Key_CapsLock
+    0x01000042: 'num_lock',  # Qt::Key_NumLock
+    0x01000043: 'scroll_lock',
+    0x01000044: 'esc',       # Qt::Key_Escape
+    0x01000045: 'tab',       # Qt::Key_Tab
+    0x01000046: 'backspace', # Qt::Key_Backspace
+    0x01000047: 'ret',       # Qt::Key_Return
+    0x01000048: 'ret',       # Qt::Key_Enter
+    0x01000049: 'insert',    # Qt::Key_Insert
+    0x0100004a: 'delete',    # Qt::Key_Delete
+    0x0100004b: 'pause',
+    0x01000050: 'home',
+    0x01000051: 'end',
+    0x01000052: 'page_up',
+    0x01000053: 'page_down',
+    0x01000054: 'left',
+    0x01000055: 'up',
+    0x01000056: 'right',
+    0x01000057: 'down',
+    0x01000058: 'space',
+    0x01000059: 'ret',       # Qt::Key_Return (numpad)
+    0x0100005a: 'menu',
+    0x01000060: 'f1', 0x01000061: 'f2', 0x01000062: 'f3',
+    0x01000063: 'f4', 0x01000064: 'f5', 0x01000065: 'f6',
+    0x01000066: 'f7', 0x01000067: 'f8', 0x01000068: 'f9',
+    0x01000069: 'f10', 0x0100006a: 'f11', 0x0100006b: 'f12',
+    0x01000070: 'kp_0', 0x01000071: 'kp_1', 0x01000072: 'kp_2',
+    0x01000073: 'kp_3', 0x01000074: 'kp_4', 0x01000075: 'kp_5',
+    0x01000076: 'kp_6', 0x01000077: 'kp_7', 0x01000078: 'kp_8',
+    0x01000079: 'kp_9',
+    0x0100007a: 'kp_divide', 0x0100007b: 'kp_multiply',
+    0x0100007c: 'kp_subtract', 0x0100007d: 'kp_add',
+    0x0100007e: 'kp_enter', 0x0100007f: 'kp_decimal',
+    0x01000010: 'minus',     # Qt::Key_Minus (hyphen)
+    0x01000011: 'equal',     # Qt::Key_Equal
+}
+
+# Also map printable ASCII chars directly
+for _c in 'abcdefghijklmnopqrstuvwxyz0123456789':
+    _QT_KEY_TO_QCODE[ord(_c)] = _c
+_QT_KEY_TO_QCODE[ord('-')] = 'minus'
+_QT_KEY_TO_QCODE[ord('=')] = 'equal'
+_QT_KEY_TO_QCODE[ord('[')] = 'bracket_left'
+_QT_KEY_TO_QCODE[ord(']')] = 'bracket_right'
+_QT_KEY_TO_QCODE[ord('\\')] = 'backslash'
+_QT_KEY_TO_QCODE[ord(';')] = 'semicolon'
+_QT_KEY_TO_QCODE[ord("'")] = 'apostrophe'
+_QT_KEY_TO_QCODE[ord('`')] = 'grave_accent'
+_QT_KEY_TO_QCODE[ord(',')] = 'comma'
+_QT_KEY_TO_QCODE[ord('.')] = 'dot'
+_QT_KEY_TO_QCODE[ord('/')] = 'slash'
+_QT_KEY_TO_QCODE[ord(' ')] = 'space'
 
 
 class QemuVMProvider(SurfaceProvider):
@@ -134,7 +235,10 @@ class QemuVMProvider(SurfaceProvider):
         self._qmp_sock: socket.socket | None = None
         self._running = False
         self._last_frame: tuple[bytes, int, int] | None = None
-        self._frame_lock = Thread._lock if hasattr(Thread, '_lock') else None
+
+        self._tpm_process: subprocess.Popen | None = None
+        self._tpm_dir: str | None = None
+        self._ovmf_vars_path: str | None = None
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 
@@ -142,6 +246,34 @@ class QemuVMProvider(SurfaceProvider):
         if self._running:
             return
         self._ensure_qmp_socket_removed()
+
+        # Start swtpm if TPM flags are present in qemu_argv
+        tpm_socket = self._tpm_socket_path()
+        if tpm_socket:
+            self._ensure_tpm_socket_removed(tpm_socket)
+            self._tpm_dir = tempfile.mkdtemp(prefix="fauxnix-tpm-")
+            try:
+                self._tpm_process = subprocess.Popen(
+                    ["swtpm", "socket",
+                     "--tpmstate", f"dir={self._tpm_dir}",
+                     "--ctrl", f"type=unixio,path={tpm_socket}",
+                     "--tpm2"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                # Wait for TPM socket to appear
+                for _ in range(10):
+                    if Path(tpm_socket).exists():
+                        break
+                    time.sleep(0.2)
+                if not Path(tpm_socket).exists():
+                    self._stop_tpm()
+                    raise RuntimeError(f"swtpm socket not found at {tpm_socket}")
+            except FileNotFoundError:
+                self._stop_tpm()
+                raise RuntimeError("swtpm not found — install swtpm for Windows 11 support")
+
+        self._ensure_writable_ovmf_vars()
         cmd = self._build_qemu_cmd()
         try:
             self._process = subprocess.Popen(
@@ -150,14 +282,15 @@ class QemuVMProvider(SurfaceProvider):
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError:
+            self._stop_tpm()
             raise RuntimeError("qemu-system-x86_64 not found — is QEMU installed?")
-        # Wait briefly for QMP socket to appear
-        for _ in range(20):
+        # Wait for QMP socket to appear
+        for _ in range(40):
             if Path(self._qmp_path).exists():
                 break
-            time.sleep(0.2)
+            time.sleep(0.25)
         if not Path(self._qmp_path).exists():
-            self._running = False
+            self._stop_tpm()
             raise RuntimeError(f"QEMU QMP socket not found at {self._qmp_path}")
         self._connect_qmp()
         self._running = True
@@ -181,6 +314,8 @@ class QemuVMProvider(SurfaceProvider):
         self._last_frame = None
         self._disconnect_qmp()
         self._ensure_qmp_socket_removed()
+        self._stop_tpm()
+        self._cleanup_ovmf_vars()
 
     def is_running(self) -> bool:
         if self._process is None:
@@ -290,41 +425,33 @@ class QemuVMProvider(SurfaceProvider):
     def _send_key(self, event: InputEvent) -> None:
         if event.key is None:
             return
-        # Try to look up the key as a QKeyCode by character
-        char = chr(event.key) if 32 <= event.key <= 126 else ""
-        if char and char in _CHAR_TO_QCODE:
-            mapping = _CHAR_TO_QCODE[char]
-            if isinstance(mapping, tuple):
-                shift_qcode, qcode = mapping
-                action = "press" if event.type == "key_press" else "release"
-                self._qmp_cmd("input-send-event", {
-                    "events": [
-                        {"type": "key", "data": {"action": action, "key": {"type": "qcode", "data": _qcode_name(shift_qcode)}}},
-                        {"type": "key", "data": {"action": action, "key": {"type": "qcode", "data": _qcode_name(qcode)}}},
-                    ]
-                })
-            else:
-                action = "press" if event.type == "key_press" else "release"
-                self._qmp_cmd("input-send-event", {
-                    "events": [
-                        {"type": "key", "data": {"action": action, "key": {"type": "qcode", "data": _qcode_name(mapping)}}},
-                    ]
-                })
-
-    def _send_axis(self, event: InputEvent) -> None:
-        direction = "down" if (event.delta_y or 0) > 0 else "up"
+        key = event.key
+        qcode = _X11_TO_QCODE.get(key) or _QT_KEY_TO_QCODE.get(key)
+        if qcode is None and 32 <= key <= 126:
+            c = chr(key)
+            mapping = _CHAR_TO_QCODE.get(c)
+            if isinstance(mapping, str):
+                qcode = _qcode_name(mapping)
+            elif isinstance(mapping, tuple):
+                qcode = _qcode_name(mapping[1])
+        if qcode is None:
+            return
+        action = "press" if event.type == "key_press" else "release"
         self._qmp_cmd("input-send-event", {
             "events": [
-                {"type": "abs", "data": {"axis": "x", "value": 0} if False else {}},
+                {"type": "key", "data": {"action": action, "key": {"type": "qcode", "data": qcode}}},
             ]
         })
-        # QEMU doesn't have a native wheel axis, simulate via buttons 4/5
-        btn = 4 if direction == "up" else 5
-        for _ in range(min(abs(int(event.delta_y or 0)) // 15 + 1, 10)):
+
+    def _send_axis(self, event: InputEvent) -> None:
+        """Simulate scroll wheel via button 4 (up) / 5 (down) press+release."""
+        btn = 4 if (event.delta_y or 0) < 0 else 5
+        ticks = min(abs(int(event.delta_y or 0)) // 15 + 1, 10)
+        for _ in range(ticks):
             self._qmp_cmd("input-send-event", {
                 "events": [
-                    {"type": "btn", "data": {"action": "press", "button": "left"} if False else {}},
-                    {"type": "btn", "data": {"action": "press", "button": "left" if btn == 4 else "left"}},
+                    {"type": "btn", "data": {"action": "press", "button": f"btn{btn}"}},
+                    {"type": "btn", "data": {"action": "release", "button": f"btn{btn}"}},
                 ]
             })
 
@@ -337,12 +464,13 @@ class QemuVMProvider(SurfaceProvider):
             if char in _CHAR_TO_QCODE:
                 mapping = _CHAR_TO_QCODE[char]
                 if isinstance(mapping, tuple):
-                    _, qcode = mapping
+                    shift_qcode, qcode = mapping
                     self._qmp_cmd("input-send-event", {
                         "events": [
-                            {"type": "key", "data": {"action": "press", "key": {"type": "qcode", "data": _qcode_name(_CHAR_TO_QCODE.get(' ', 'key_space'))}}},
+                            {"type": "key", "data": {"action": "press", "key": {"type": "qcode", "data": _qcode_name(shift_qcode)}}},
                             {"type": "key", "data": {"action": "press", "key": {"type": "qcode", "data": _qcode_name(qcode)}}},
                             {"type": "key", "data": {"action": "release", "key": {"type": "qcode", "data": _qcode_name(qcode)}}},
+                            {"type": "key", "data": {"action": "release", "key": {"type": "qcode", "data": _qcode_name(shift_qcode)}}},
                         ]
                     })
                 else:
@@ -390,8 +518,10 @@ class QemuVMProvider(SurfaceProvider):
             extra.extend(["-qmp", f"unix:{self._qmp_path},server=on,wait=off"])
         if not any(arg.startswith("-vnc") for arg in cmd):
             extra.extend(["-vnc", f":{self._vnc_display}"])
-        if not any(arg.startswith("-display") for arg in cmd):
-            extra.extend(["-display", "egl-headless"])
+        # No -display flag added here: VNC provides the framebuffer that
+        # screendump captures. The builder or user can override with -display
+        # if needed (e.g. -display gtk for a debug window). Avoid egl-headless
+        # on Nouveau/Fermi GPUs — it freezes the desktop.
         cmd.extend(extra)
         return cmd
 
@@ -401,15 +531,92 @@ class QemuVMProvider(SurfaceProvider):
         except Exception:
             pass
 
+    def _ensure_writable_ovmf_vars(self):
+        """Copy OVMF vars to writable path if it's in the Nix store (read-only)."""
+        argv = self._qemu_argv or []
+        for i, arg in enumerate(argv):
+            if arg == "-drive" and i + 1 < len(argv):
+                val = argv[i + 1]
+                if "if=pflash" in val and "readonly=on" not in val and "file=" in val:
+                    fpath = val.split("file=", 1)[1].split(",", 1)[0]
+                    if not os.access(fpath, os.W_OK):
+                        writable = f"/tmp/fauxnix-ovmf-vars-{self._instance_id}.fd"
+                        import shutil
+                        shutil.copy2(fpath, writable)
+                        os.chmod(writable, 0o644)
+                        argv[i + 1] = val.replace(fpath, writable)
+                        self._ovmf_vars_path = writable
+                    break
+
+    def _tpm_socket_path(self) -> str | None:
+        """Extract TPM socket path from qemu_argv if present."""
+        argv = self._qemu_argv or []
+        for i, arg in enumerate(argv):
+            if arg.startswith("socket,id=chrtpm,path="):
+                return arg.split("path=", 1)[1]
+            if arg == "-chardev" and i + 1 < len(argv):
+                val = argv[i + 1]
+                if "id=chrtpm" in val and "path=" in val:
+                    return val.split("path=", 1)[1]
+        return None
+
+    def _ensure_tpm_socket_removed(self, sock: str):
+        try:
+            Path(sock).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _cleanup_ovmf_vars(self):
+        if self._ovmf_vars_path:
+            try:
+                Path(self._ovmf_vars_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._ovmf_vars_path = None
+
+    def _stop_tpm(self):
+        if self._tpm_process:
+            try:
+                self._tpm_process.terminate()
+                self._tpm_process.wait(timeout=3)
+            except Exception:
+                try:
+                    self._tpm_process.kill()
+                    self._tpm_process.wait(timeout=2)
+                except Exception:
+                    pass
+            self._tpm_process = None
+        if self._tpm_dir:
+            try:
+                import shutil
+                shutil.rmtree(self._tpm_dir, ignore_errors=True)
+            except Exception:
+                pass
+            self._tpm_dir = None
+
     def _connect_qmp(self):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(5)
-        sock.connect(self._qmp_path)
+        # QMP socket may exist but not yet accepting connections
+        for _ in range(15):
+            try:
+                sock.connect(self._qmp_path)
+                break
+            except (ConnectionRefusedError, OSError):
+                time.sleep(0.3)
+        else:
+            sock.close()
+            raise ConnectionError(f"QEMU QMP socket at {self._qmp_path} refused connection")
+        self._qmp_sock = sock
         # Read the QMP greeting
         greeting = self._qmp_recv()
+        if greeting is None:
+            raise ConnectionError("No QMP greeting received")
         # Send qmp_capabilities
         self._qmp_send({"execute": "qmp_capabilities"})
-        self._qmp_sock = sock
+        capabilities_resp = self._qmp_recv()
+        # Drain any queued events that arrived after capabilities
+        self._drain_qmp()
 
     def _disconnect_qmp(self):
         if self._qmp_sock:
@@ -422,30 +629,34 @@ class QemuVMProvider(SurfaceProvider):
     def _qmp_send(self, cmd: dict) -> None:
         if self._qmp_sock is None:
             raise ConnectionError("QMP not connected")
-        data = json.dumps(cmd).encode("utf-8")
+        data = (json.dumps(cmd) + "\n").encode("utf-8")
         self._qmp_sock.sendall(data)
 
     def _qmp_recv(self, timeout: float = 2.0) -> dict | None:
         if self._qmp_sock is None:
             return None
         self._qmp_sock.settimeout(timeout)
-        chunks = []
+        buf = b""
         try:
             while True:
                 chunk = self._qmp_sock.recv(4096)
                 if not chunk:
                     break
-                chunks.append(chunk)
-                data = b"".join(chunks)
-                # Check if we have a complete JSON object
-                try:
-                    return json.loads(data.decode("utf-8"))
-                except json.JSONDecodeError:
-                    continue
+                buf += chunk
+                # QMP is newline-delimited JSON
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        return json.loads(line.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        continue
         except socket.timeout:
-            if chunks:
+            if buf.strip():
                 try:
-                    return json.loads(b"".join(chunks).decode("utf-8"))
+                    return json.loads(buf.strip().decode("utf-8"))
                 except json.JSONDecodeError:
                     pass
         return None
@@ -457,3 +668,13 @@ class QemuVMProvider(SurfaceProvider):
             cmd["arguments"] = arguments
         self._qmp_send(cmd)
         return self._qmp_recv()
+
+    def _drain_qmp(self) -> None:
+        """Drain any pending QMP responses (e.g. event messages)."""
+        try:
+            while True:
+                resp = self._qmp_recv(timeout=0.5)
+                if resp is None:
+                    break
+        except Exception:
+            pass

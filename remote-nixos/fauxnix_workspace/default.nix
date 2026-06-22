@@ -9,6 +9,8 @@ let
     pkgs.xorg.xrdb
     pkgs.xorg.xkbcomp
     pkgs.wlrctl
+    pkgs.qemu_full
+    pkgs.swtpm
   ];
 
   # Collect the Python source tree. Keep only Python files and directories
@@ -60,6 +62,8 @@ pkgs.stdenv.mkDerivation {
     #!${pkgs.runtimeShell}
     export QT_QPA_PLATFORM=xcb
     export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+    export FAUXNIX_OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+    export FAUXNIX_OVMF_VARS="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
     export PATH="${pkgs.lib.makeBinPath runtimeTools}:$PATH"
     PYTHONPATH="$out/lib/fauxnix-workspace:$PYTHONPATH"
     exec ${fauxnixWorkspacePython}/bin/python3 -m fauxnix_workspace "$@"

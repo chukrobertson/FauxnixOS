@@ -1,6 +1,7 @@
 """Fauxnix Workspace node types — Chat, Terminal, Browser, Threads, Files, etc."""
 
 import json
+import os
 import threading
 import urllib.request
 import urllib.parse
@@ -1007,8 +1008,6 @@ class AppLauncherNode(BaseNodeWidget):
 # ═══════════════════════════════════════════════════════════════════════
 
 class DisplayCardNode(BaseNodeWidget):
-    ZOOM_THUMB = 0.7
-    ZOOM_FULL = 1.6
     THUMB_INTERVAL_MS = 1200
     FRAME_INTERVAL_MS = 80
     IDLE_FRAME_INTERVAL_MS = 250
@@ -1040,6 +1039,7 @@ class DisplayCardNode(BaseNodeWidget):
         self._last_surface_event: dict = {"event": "created", "type": "surface_event"}
         self._zoom_mode: str = "thumb"
         self._last_thumb: QPixmap | None = None
+        self._fullscreen_window: QWidget | None = None
         if provider is not None:
             self._update_surface_aspect_from_dimensions(
                 getattr(provider, "_width", None),
@@ -1097,6 +1097,8 @@ class DisplayCardNode(BaseNodeWidget):
         for key, label, cb in [
             ("launch", "Launch", self._launch),
             ("focus", "Focus", self._focus),
+            ("window", "Window", lambda: self._apply_zoom_mode("window")),
+            ("fullscreen", "Fullscreen", lambda: self._apply_zoom_mode("fullscreen")),
             ("hide", "Hide", self._minimize),
             ("close", "Close", self._close),
         ]:
@@ -1555,13 +1557,19 @@ class DisplayCardNode(BaseNodeWidget):
                     pixmap = QPixmap.fromImage(image)
                     self._last_thumb = pixmap
                     self._thumb_label.setPixmap(pixmap)
+
+                    if self._fullscreen_window is not None and hasattr(self, "_fullscreen_label"):
+                        fs_label = self._fullscreen_label
+                        fw = max(1, fs_label.width())
+                        fh = max(1, fs_label.height())
+                        fscaled = _scale_rgba(data, w, h, fw, fh)
+                        fimage = QImage(fscaled, fw, fh, fw * 4, QImage.Format.Format_RGBA8888).copy()
+                        fs_label.setPixmap(QPixmap.fromImage(fimage))
                 except Exception:
                     pass
             elif self._last_thumb is None:
                 self._thumb_label.setText(self._placeholder_text())
-            if self.isSelected():
-                self._update_zoom_state(self._canvas_scale())
-            elif self._zoom_mode != "thumb":
+            if not self.isSelected() and self._zoom_mode != "thumb":
                 self._apply_zoom_mode("thumb")
             running = self._provider.is_running()
             self._status.setText(self._status_text(running))
@@ -1569,18 +1577,15 @@ class DisplayCardNode(BaseNodeWidget):
             self._status.setText(self._status_text(False))
         self._schedule_tick()
 
-    def _update_zoom_state(self, scale: float):
-        if scale < self.ZOOM_THUMB:
-            target = "thumb"
-        elif scale < self.ZOOM_FULL:
-            target = "window"
-        else:
-            target = "fullscreen"
-        if target != self._zoom_mode:
-            self._apply_zoom_mode(target)
-
     def _apply_zoom_mode(self, mode: str):
+        if mode == self._zoom_mode:
+            return
+        old = self._zoom_mode
         self._zoom_mode = mode
+        if mode == "thumb" and old == "fullscreen":
+            self._exit_fullscreen()
+        elif mode == "fullscreen" and old == "thumb":
+            self._enter_fullscreen()
         if self._provider is not None:
             if mode == "thumb":
                 self._provider.minimize()
@@ -1588,19 +1593,41 @@ class DisplayCardNode(BaseNodeWidget):
                 self._focus()
         self._record_surface_event("zoom_mode", mode=mode)
 
+    def _enter_fullscreen(self):
+        if self._fullscreen_window is not None:
+            return
+        w = QWidget()
+        w.setWindowTitle(f"{self._surface_name} — Esc to exit")
+        w.setWindowFlags(Qt.WindowType.Window)
+        w.setStyleSheet("background: #0b0d12;")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._fullscreen_label = QLabel()
+        self._fullscreen_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._fullscreen_label)
+        w.showFullScreen()
+        self._fullscreen_window = w
+
+    def _exit_fullscreen(self):
+        if self._fullscreen_window is None:
+            return
+        self._fullscreen_window.close()
+        self._fullscreen_window.deleteLater()
+        self._fullscreen_window = None
+        self._fullscreen_label = None
+
     def _launch(self):
         if self._provider is None or self._provider_started:
             return
         try:
             if hasattr(self, "_status"):
-                action = "Opening" if self._surface_kind == "app" else "Launching"
-                self._status.setText(f"{action} {self._surface_name}...")
+                self._status.setText(f"Launching {self._surface_name}...")
             if hasattr(self, "_thumb_label") and self._last_thumb is None:
                 self._thumb_label.setText(self._placeholder_text("Starting source..."))
             self._provider.start()
             self._provider_started = True
             self._resize_provider_to_card()
-            self._focus()
+            self._apply_zoom_mode("fullscreen")
             self._record_surface_event("started")
         except Exception as e:
             self._status.setText(f"Launch failed: {e}")
@@ -1616,14 +1643,18 @@ class DisplayCardNode(BaseNodeWidget):
     def _minimize(self):
         if self._provider is None:
             return
+        if self._zoom_mode != "thumb":
+            self._apply_zoom_mode("thumb")
         self._provider.minimize()
         if hasattr(self, "_status"):
-            self._status.setText(f"Hidden | {self._source_label()} | zoom={self._canvas_scale():.2f}")
+            self._status.setText(f"Hidden | {self._source_label()}")
         self._record_surface_event("minimized")
 
     def _close(self):
         if self._provider is None:
             return
+        if self._provider_started and self._zoom_mode != "thumb":
+            self._apply_zoom_mode("thumb")
         self._provider.close()
         self._provider_started = False
         self._last_thumb = None
@@ -1808,10 +1839,7 @@ DisplayNode = GenericSurfaceCardNode
 
 @register_node_type("App", "Compatibility app card; Apps launcher now prefers Display cards with local-app sources")
 class AppCardNode(SurfaceCardNode):
-    ZOOM_THUMB = 0.7
-    ZOOM_FULL = 1.6
-    THUMB_INTERVAL_MS = 1200
-
+    
     def __init__(self, app: dict | None = None, provider: SurfaceProvider | None = None,
                  provider_spec: dict | None = None):
         app = app or {}
@@ -1888,6 +1916,8 @@ class AppCardNode(SurfaceCardNode):
         for label, cb in [
             ("Launch", self._launch),
             ("Focus", self._focus),
+            ("Window", lambda: self._apply_zoom_mode("window")),
+            ("Fullscreen", lambda: self._apply_zoom_mode("fullscreen")),
             ("Min", self._minimize),
             ("Close", self._close),
         ]:
@@ -2082,9 +2112,7 @@ class AppCardNode(SurfaceCardNode):
                     self._thumb_label.setPixmap(pixmap)
                 except Exception:
                     pass
-            if self.isSelected():
-                self._update_zoom_state(self._canvas_scale())
-            elif self._zoom_mode != "thumb":
+            if not self.isSelected() and self._zoom_mode != "thumb":
                 self._apply_zoom_mode("thumb")
             running = self._provider.is_running()
             self._status.setText(
@@ -2097,11 +2125,8 @@ class AppCardNode(SurfaceCardNode):
         if self._window_info:
             self._title_label.setText(self._window_info.get("title") or self._app_name)
             self._capture_thumb()
-            if self.isSelected():
-                self._update_zoom_state(self._canvas_scale())
-            else:
-                if self._zoom_mode != "thumb":
-                    self._apply_zoom_mode("thumb")
+            if not self.isSelected() and self._zoom_mode != "thumb":
+                self._apply_zoom_mode("thumb")
             self._status.setText(
                 f"{self._window_info.get('app_id', 'app')} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
             )
@@ -2134,16 +2159,6 @@ class AppCardNode(SurfaceCardNode):
             self._thumb_label.setPixmap(pixmap)
         except Exception:
             pass
-
-    def _update_zoom_state(self, scale: float):
-        if scale < self.ZOOM_THUMB:
-            target = "thumb"
-        elif scale < self.ZOOM_FULL:
-            target = "window"
-        else:
-            target = "fullscreen"
-        if target != self._zoom_mode:
-            self._apply_zoom_mode(target)
 
     def _apply_zoom_mode(self, mode: str):
         self._zoom_mode = mode
@@ -5218,9 +5233,6 @@ import subprocess
 class ChromiumCardNode(BaseNodeWidget):
     CHROMIUM_APPS = {"chromium", "chromium-browser", "google-chrome", "google-chrome-stable"}
 
-    # Zoom distance thresholds for automatic window state changes.
-    ZOOM_THUMB = 0.7
-    ZOOM_FULL = 1.6
     # Thumbnail refresh interval in milliseconds.
     THUMB_INTERVAL_MS = 1200
 
@@ -5255,6 +5267,8 @@ class ChromiumCardNode(BaseNodeWidget):
         for label, cb in [
             ("Launch", self._launch),
             ("Focus", self._focus),
+            ("Window", lambda: self._apply_zoom_mode("window")),
+            ("Fullscreen", lambda: self._apply_zoom_mode("fullscreen")),
             ("Min", self._minimize),
             ("Max", self._maximize),
             ("Close", self._close),
@@ -5308,12 +5322,8 @@ class ChromiumCardNode(BaseNodeWidget):
 
         if self._window:
             self._capture_thumb()
-            if self.isSelected():
-                self._update_zoom_state(self._canvas_scale())
-            else:
-                # When deselected, drop back to thumbnail mode so the canvas stays usable.
-                if self._zoom_mode != "thumb":
-                    self._apply_zoom_mode("thumb")
+            if not self.isSelected() and self._zoom_mode != "thumb":
+                self._apply_zoom_mode("thumb")
 
         self._status.setText(
             f"{self._window.app_id if self._window else 'not running'} | zoom={self._canvas_scale():.2f} | {self._zoom_mode}"
@@ -5343,16 +5353,6 @@ class ChromiumCardNode(BaseNodeWidget):
         except Exception:
             pass
 
-
-    def _update_zoom_state(self, scale: float):
-        if scale < self.ZOOM_THUMB:
-            target = "thumb"
-        elif scale < self.ZOOM_FULL:
-            target = "window"
-        else:
-            target = "fullscreen"
-        if target != self._zoom_mode:
-            self._apply_zoom_mode(target)
 
     def _apply_zoom_mode(self, mode: str):
         self._zoom_mode = mode
@@ -5455,60 +5455,89 @@ class ChromiumCardNode(BaseNodeWidget):
 # Environments Node — sub loader for macOS VM, Windows VM, GNOME, etc.
 # ═══════════════════════════════════════════════════════════════════════
 
-_ENVIRONMENTS: list[dict] = [
-    {
-        "id": "macos-vm",
-        "name": "macOS Sequoia",
-        "icon": "",
-        "kind": "looking-glass-vm",
-        "surface_kind": "vm",
-        "description": "macOS 15 VM via QEMU/KVM + OpenCore",
-        "width": 1920,
-        "height": 1080,
-        "memory_mb": 8192,
-        "smp": 4,
-        "aspect": 16 / 9,
-        "context": {"os": "macos", "hypervisor": "qemu"},
-    },
-    {
-        "id": "windows-vm",
-        "name": "Windows 11",
-        "icon": "",
-        "kind": "looking-glass-vm",
-        "surface_kind": "vm",
-        "description": "Windows 11 VM via QEMU/KVM",
-        "width": 1920,
-        "height": 1080,
-        "memory_mb": 8192,
-        "smp": 4,
-        "aspect": 16 / 9,
-        "context": {"os": "windows", "hypervisor": "qemu"},
-    },
-    {
-        "id": "nested-gnome",
-        "name": "GNOME Desktop",
-        "icon": "",
-        "kind": "nested-gnome",
-        "surface_kind": "desktop",
-        "description": "Full GNOME session in a nested compositor",
-        "width": 1280,
-        "height": 720,
-        "aspect": 16 / 9,
-        "context": {"os": "linux", "desktop": "gnome"},
-    },
-    {
-        "id": "fauxnix-workspace",
-        "name": "Fauxnix Workspace",
-        "icon": "",
-        "kind": "self",
-        "surface_kind": "workspace",
-        "description": "Switch to the Fauxnix canvas workspace",
-        "width": 0,
-        "height": 0,
-        "aspect": 16 / 9,
-        "context": {"os": "fauxnix", "desktop": "workspace"},
-    },
-]
+_ENVIRONMENTS: list[dict] = []
+_ENVIRONMENTS_LOADED = False
+
+
+def _load_environments() -> list[dict]:
+    global _ENVIRONMENTS_LOADED
+    if _ENVIRONMENTS_LOADED:
+        return _ENVIRONMENTS
+
+    defaults: list[dict] = [
+        {
+            "id": "macos-vm",
+            "name": "macOS Sequoia",
+            "kind": "looking-glass-vm",
+            "surface_kind": "vm",
+            "description": "macOS 15 VM via QEMU/KVM + OpenCore",
+            "width": 1920,
+            "height": 1080,
+            "builder": "macos",
+            "disk_path": "/home/chvk/macos-disk.qcow2",
+            "opencore_iso": "/home/chvk/LongQT-OpenCore-v0.7.iso",
+            "installer_iso": "/home/chvk/macOS-Sequoia-15.7.7.iso",
+            "memory_mb": 8192,
+            "smp_cores": 4,
+            "aspect": 16 / 9,
+            "context": {"os": "macos", "hypervisor": "qemu"},
+        },
+        {
+            "id": "windows-vm",
+            "name": "Windows 11",
+            "kind": "looking-glass-vm",
+            "surface_kind": "vm",
+            "description": "Windows 11 VM via QEMU/KVM",
+            "width": 1920,
+            "height": 1080,
+            "builder": "windows",
+            "disk_path": "/home/chvk/win11.qcow2",
+            "memory_mb": 8192,
+            "smp_cores": 4,
+            "aspect": 16 / 9,
+            "context": {"os": "windows", "hypervisor": "qemu"},
+        },
+        {
+            "id": "nested-gnome",
+            "name": "GNOME Desktop",
+            "kind": "nested-gnome",
+            "surface_kind": "desktop",
+            "description": "Full GNOME session in a nested compositor",
+            "width": 1280,
+            "height": 720,
+            "aspect": 16 / 9,
+            "context": {"os": "linux", "desktop": "gnome"},
+        },
+        {
+            "id": "fauxnix-workspace",
+            "name": "Fauxnix Workspace",
+            "kind": "self",
+            "surface_kind": "workspace",
+            "description": "Switch to the Fauxnix canvas workspace",
+            "width": 0,
+            "height": 0,
+            "aspect": 16 / 9,
+            "context": {"os": "fauxnix", "desktop": "workspace"},
+        },
+    ]
+
+    # Try loading config file ~/.config/fauxnix/environments.json
+    config_path = os.path.expanduser("~/.config/fauxnix/environments.json")
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                parsed = json.loads(f.read())
+            user_environments = parsed if isinstance(parsed, list) else parsed.get("environments", parsed.get("envs", []))
+            if user_environments:
+                _ENVIRONMENTS.extend(user_environments)
+    except Exception:
+        pass
+
+    if not _ENVIRONMENTS:
+        _ENVIRONMENTS.extend(defaults)
+
+    _ENVIRONMENTS_LOADED = True
+    return _ENVIRONMENTS
 
 
 @register_node_type(
@@ -5550,7 +5579,8 @@ class EnvironmentsNode(BaseNodeWidget):
         grid = QGridLayout()
         grid.setSpacing(6)
 
-        for idx, env in enumerate(_ENVIRONMENTS):
+        envs = _load_environments()
+        for idx, env in enumerate(envs):
             card = QFrame()
             card.setStyleSheet(
                 "QFrame { background: #14151e; border: 1px solid #2a2d3a; "
@@ -5605,6 +5635,15 @@ class EnvironmentsNode(BaseNodeWidget):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet(
+            "color: #b96a6a; font-size: 9px; background: transparent; "
+            "padding: 2px 0;"
+        )
+        self._status_label.setWordWrap(True)
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._status_label)
+
         w.setMinimumHeight(300)
         self.set_body_widget(w)
 
@@ -5616,6 +5655,21 @@ class EnvironmentsNode(BaseNodeWidget):
             w = w.parentWidget()
         return None
 
+    def _find_main_window(self):
+        w = self.widget
+        while w:
+            if hasattr(w, "_stack") and hasattr(w, "_tabs"):
+                return w
+            w = w.parentWidget()
+        return None
+
+    def _switch_to_main_tab(self, canvas):
+        mw = self._find_main_window()
+        if mw is not None and mw._stack is not None:
+            mw._stack.setCurrentIndex(0)
+            mw._update_tab_buttons()
+            self._emit_output({}, {"action": "switch_tab", "target": "main"})
+
     def _spawn_environment(self, env: dict):
         canvas = self._find_canvas()
         if canvas is None:
@@ -5625,7 +5679,7 @@ class EnvironmentsNode(BaseNodeWidget):
         env_name = env.get("name", "Environment")
 
         if env_id == "fauxnix-workspace":
-            self._emit_output(env, {"action": "switch_tab", "target": "main"})
+            self._switch_to_main_tab(canvas)
             return
 
         source_spec = {
@@ -5640,6 +5694,39 @@ class EnvironmentsNode(BaseNodeWidget):
             "aspect": env.get("aspect", 16 / 9),
             "context": dict(env.get("context", {})),
         }
+
+        # If the env config has a builder, generate qemu_argv from it
+        if env.get("builder"):
+            try:
+                from ..surface_providers.vm_builder import build_env_qemu_argv
+                qemu_argv = build_env_qemu_argv(env)
+                if qemu_argv:
+                    source_spec["qemu_argv"] = qemu_argv
+                else:
+                    raise RuntimeError(f"Unknown VM builder: {env.get('builder')}")
+            except Exception as e:
+                message = f"{env_name} config failed: {e}"
+                if hasattr(self, "_status_label"):
+                    self._status_label.setText(message)
+                self._emit_output(env, {
+                    "action": "builder_error",
+                    "environment": env_id,
+                    "error": str(e),
+                })
+                return
+        elif env.get("kind") in {"looking-glass-vm", "qemu-vm"} and not source_spec.get("qemu_argv"):
+            message = f"{env_name} is missing qemu_argv"
+            if hasattr(self, "_status_label"):
+                self._status_label.setText(message)
+            self._emit_output(env, {
+                "action": "builder_error",
+                "environment": env_id,
+                "error": "missing qemu_argv",
+            })
+            return
+
+        if hasattr(self, "_status_label"):
+            self._status_label.setText("")
 
         provider = create_source(source_spec)
 

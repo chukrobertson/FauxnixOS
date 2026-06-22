@@ -1,6 +1,8 @@
 *.png
 *.mp4
 *.iso
+*.pkg
+nssm.exe
 ssh-fauxnix.ps1
 AGENTS.md
 __pycache__/
