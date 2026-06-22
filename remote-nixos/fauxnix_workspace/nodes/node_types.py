@@ -5479,8 +5479,14 @@ def _load_environments() -> list[dict]:
             "installer_iso": "/home/chvk/macOS-Sequoia-15.7.7.iso",
             "memory_mb": 8192,
             "smp_cores": 4,
+            "vnc_display": 1,
+            "vnc_listen": "100.97.123.113",
             "aspect": 16 / 9,
-            "context": {"os": "macos", "hypervisor": "qemu"},
+            "context": {
+                "os": "macos",
+                "hypervisor": "qemu",
+                "vnc": "100.97.123.113:5901",
+            },
         },
         {
             "id": "windows-vm",
@@ -5494,6 +5500,8 @@ def _load_environments() -> list[dict]:
             "disk_path": "/home/chvk/win11.qcow2",
             "memory_mb": 8192,
             "smp_cores": 4,
+            "vnc_display": 2,
+            "vnc_listen": "100.97.123.113",
             "aspect": 16 / 9,
             "context": {"os": "windows", "hypervisor": "qemu"},
         },
@@ -5694,6 +5702,9 @@ class EnvironmentsNode(BaseNodeWidget):
             "aspect": env.get("aspect", 16 / 9),
             "context": dict(env.get("context", {})),
         }
+        for key in ("qmp_path", "vnc_display", "vnc_listen", "vnc_host"):
+            if key in env:
+                source_spec[key] = env[key]
 
         # If the env config has a builder, generate qemu_argv from it
         if env.get("builder"):

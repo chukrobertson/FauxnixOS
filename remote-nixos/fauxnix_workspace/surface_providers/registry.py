@@ -241,12 +241,14 @@ def _create_looking_glass_vm(spec: dict) -> SurfaceProvider:
     width = int(spec.get("width", spec.get("w", 1280)))
     height = int(spec.get("height", spec.get("h", 720)))
     qmp_path = str(spec.get("qmp_path") or "")
-    vnc_display = int(spec.get("vnc_display", 0))
+    vnc_display = int(spec.get("vnc_display", 1))
+    vnc_listen = str(spec.get("vnc_listen") or spec.get("vnc_host") or "")
 
     return QemuVMProvider(
         qemu_argv=qemu_argv,
         qmp_path=qmp_path,
         vnc_display=vnc_display,
+        vnc_listen=vnc_listen,
         width=width,
         height=height,
         instance_id=instance_id,

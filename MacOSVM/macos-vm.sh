@@ -5,6 +5,7 @@ OC_ISO_URL="https://github.com/LongQT-sea/OpenCore-ISO/releases/download/v0.7/Lo
 OC_ISO="LongQT-OpenCore-v0.7.iso"
 DISK="macos-disk.qcow2"
 DISK_SIZE="80"
+DEFAULT_TAILSCALE_IP="100.97.123.113"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -82,6 +83,22 @@ find_ovmf_vars() {
       '/nix/store/*qemu*/share/qemu/edk2-i386-vars.fd'
 }
 
+detect_vnc_listen() {
+  if [ -n "${VNC_LISTEN:-}" ]; then
+    printf '%s\n' "$VNC_LISTEN"
+    return 0
+  fi
+  if command -v tailscale >/dev/null 2>&1; then
+    local ip
+    ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+    if [ -n "$ip" ]; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$DEFAULT_TAILSCALE_IP"
+}
+
 echo -e "${GREEN}== macOS Sequoia VM Setup ==${NC}"
 echo ""
 
@@ -123,6 +140,11 @@ echo -e "${GREEN}[ok]${NC} QEMU found"
 echo -e "${GREEN}[ok]${NC} OVMF code: $OVMF_CODE"
 echo -e "${GREEN}[ok]${NC} OVMF vars: $OVMF_VARS"
 
+VNC_DISPLAY="${VNC_DISPLAY:-1}"
+VNC_LISTEN="$(detect_vnc_listen)"
+VNC_PORT="$((5900 + VNC_DISPLAY))"
+VNC_TARGET="${VNC_LISTEN}:${VNC_DISPLAY}"
+
 if [ ! -f "$OC_ISO" ]; then
   echo -e "${YELLOW}Downloading OpenCore ISO for QEMU...${NC}"
   curl -L -o "$OC_ISO" "$OC_ISO_URL"
@@ -131,11 +153,17 @@ else
   echo -e "${GREEN}[ok]${NC} $OC_ISO already present"
 fi
 
-MACOS_ISO=""
-if [ -f "macOS-Sequoia-15.7.7.iso" ]; then
+MACOS_ISO="${MACOS_ISO:-}"
+if [ -n "$MACOS_ISO" ] && [ -f "$MACOS_ISO" ]; then
+  :
+elif [ -f "macOS-Sequoia-15.7.7.iso" ]; then
   MACOS_ISO="macOS-Sequoia-15.7.7.iso"
 elif [ -f "macOS-Sequoia.iso" ]; then
   MACOS_ISO="macOS-Sequoia.iso"
+elif [ -f "$HOME/macOS-Sequoia-15.7.7.iso" ]; then
+  MACOS_ISO="$HOME/macOS-Sequoia-15.7.7.iso"
+elif [ -f "$HOME/macOS-Sequoia.iso" ]; then
+  MACOS_ISO="$HOME/macOS-Sequoia.iso"
 else
   echo -e "${YELLOW}macOS installer ISO not found in current directory.${NC}"
   read -r -p "Enter full path to macOS-Sequoia-15.7.7.iso: " MACOS_ISO
@@ -163,6 +191,8 @@ echo "At the OpenCore picker, select 'macOS Installer'."
 echo "Use Disk Utility to format the virtual disk as APFS,"
 echo "then install macOS normally. It will reboot a few times."
 echo ""
+echo "TigerVNC: connect from Windows to ${VNC_LISTEN}:${VNC_PORT}"
+echo ""
 
 qemu-system-x86_64 \
   -machine q35,accel=kvm \
@@ -177,4 +207,4 @@ qemu-system-x86_64 \
   -netdev user,id=net0 \
   -device usb-tablet \
   -usb \
-  -display gtk 2>&1 || echo "If the window closes, re-run the script from a terminal to see the error."
+  -vnc "$VNC_TARGET" 2>&1 || echo "If the VM exits, check the terminal output above for the QEMU error."

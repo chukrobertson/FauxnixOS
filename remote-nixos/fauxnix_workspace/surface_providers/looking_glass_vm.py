@@ -218,6 +218,7 @@ class QemuVMProvider(SurfaceProvider):
         qemu_argv: list[str] | None = None,
         qmp_path: str = "",
         vnc_display: int = 1,
+        vnc_listen: str = "",
         width: int = 1280,
         height: int = 720,
         instance_id: str = "",
@@ -226,6 +227,7 @@ class QemuVMProvider(SurfaceProvider):
         self._qemu_argv = qemu_argv or []
         self._qmp_path = qmp_path or f"/tmp/fauxnix-qemu-{instance_id or id(self)}.sock"
         self._vnc_display = vnc_display
+        self._vnc_listen = vnc_listen
         self._width = max(320, width)
         self._height = max(240, height)
         self._name = name
@@ -517,13 +519,18 @@ class QemuVMProvider(SurfaceProvider):
         if not any("-qmp" in arg for arg in cmd):
             extra.extend(["-qmp", f"unix:{self._qmp_path},server=on,wait=off"])
         if not any(arg.startswith("-vnc") for arg in cmd):
-            extra.extend(["-vnc", f":{self._vnc_display}"])
+            extra.extend(["-vnc", self._vnc_target()])
         # No -display flag added here: VNC provides the framebuffer that
         # screendump captures. The builder or user can override with -display
         # if needed (e.g. -display gtk for a debug window). Avoid egl-headless
         # on Nouveau/Fermi GPUs — it freezes the desktop.
         cmd.extend(extra)
         return cmd
+
+    def _vnc_target(self) -> str:
+        if self._vnc_listen:
+            return f"{self._vnc_listen}:{self._vnc_display}"
+        return f":{self._vnc_display}"
 
     def _ensure_qmp_socket_removed(self):
         try:

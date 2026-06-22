@@ -22,7 +22,17 @@ The script will:
 - Download `LongQT-OpenCore-v0.7.iso` automatically
 - Prompt for the macOS ISO path (or find it in the current dir)
 - Create an 80 GB virtual disk (`macos-disk.qcow2`)
-- Boot the VM
+- Boot the VM and expose it over VNC for TigerVNC
+
+By default on the Fauxnix ThinkPad, TigerVNC should connect to:
+
+```text
+100.97.123.113:5901
+```
+
+Override with `VNC_LISTEN=<ip>` and `VNC_DISPLAY=<n>` if needed.
+Set `MACOS_ISO=<path>` to force a specific installer ISO; on Fauxnix the script
+also checks `/home/chvk/macOS-Sequoia-15.7.7.iso`.
 
 ---
 
@@ -92,7 +102,7 @@ qemu-system-x86_64 \
   -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
   -device e1000-82545em,netdev=net0 \
   -netdev user,id=net0 \
-  -display gtk
+  -vnc 100.97.123.113:1
 ```
 
 ### Headless server (SSH-only, no monitor)
@@ -111,7 +121,7 @@ qemu-system-x86_64 \
   -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
   -device e1000-82545em,netdev=net0 \
   -netdev user,id=net0 \
-  -display vnc=:1
+  -vnc 100.97.123.113:1
 ```
 
 Then connect with any VNC client to `<linux-ip>:5901`.
