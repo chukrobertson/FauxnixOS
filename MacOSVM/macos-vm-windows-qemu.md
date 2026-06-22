@@ -47,8 +47,8 @@ qemu-system-x86_64 ^
   -cpu host,vendor=GenuineIntel,+invtsc,vmware-cpuid-freq=on ^
   -smp 4 -m 8192 ^
   -drive if=pflash,format=raw,readonly=on,file="C:\Program Files\qemu\share\edk2-x86_64-code.fd" ^
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=0,media=cdrom ^
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=1,media=cdrom ^
+  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom ^
+  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom ^
   -drive file=macos-disk.qcow2,format=qcow2,if=virtio ^
   -device virtio-net-pci,netdev=net0 ^
   -netdev user,id=net0 ^

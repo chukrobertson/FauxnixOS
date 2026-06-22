@@ -200,8 +200,8 @@ qemu-system-x86_64 \
   -smp 4 -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file="$OC_ISO",format=raw,if=ide,index=0,media=cdrom \
-  -drive file="$MACOS_ISO",format=raw,if=ide,index=1,media=cdrom \
+  -drive file="$MACOS_ISO",format=raw,if=ide,index=0,media=cdrom \
+  -drive file="$OC_ISO",format=raw,if=ide,index=1,media=cdrom \
   -drive file="$DISK",format=qcow2,if=ide,index=2,media=disk \
   -device e1000-82545em,netdev=net0 \
   -netdev user,id=net0 \

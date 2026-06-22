@@ -365,15 +365,27 @@ def _cpu(spec: VMSpec) -> str:
 def _drives(spec: VMSpec) -> list[str]:
     drives: list[str] = []
 
-    # macOS: two CD-ROM drives (OpenCore + installer)
-    if spec.opencore_iso:
-        drives.append(
-            f"file={spec.opencore_iso},format=raw,if=ide,index=0,media=cdrom"
-        )
-    if spec.installer_iso:
-        drives.append(
-            f"file={spec.installer_iso},format=raw,if=ide,index=1,media=cdrom"
-        )
+    if spec.kind == "macos":
+        # Mirror the working VMware layout: macOS installer in DVD slot 1,
+        # OpenCore/helper ISO in DVD slot 2.
+        if spec.installer_iso:
+            drives.append(
+                f"file={spec.installer_iso},format=raw,if=ide,index=0,media=cdrom"
+            )
+        if spec.opencore_iso:
+            opencore_index = 1 if spec.installer_iso else 0
+            drives.append(
+                f"file={spec.opencore_iso},format=raw,if=ide,index={opencore_index},media=cdrom"
+            )
+    else:
+        if spec.opencore_iso:
+            drives.append(
+                f"file={spec.opencore_iso},format=raw,if=ide,index=0,media=cdrom"
+            )
+        if spec.installer_iso:
+            drives.append(
+                f"file={spec.installer_iso},format=raw,if=ide,index=1,media=cdrom"
+            )
 
     # Windows: virtio drivers ISO
     if spec.virtio_iso:

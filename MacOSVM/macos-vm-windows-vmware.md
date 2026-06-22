@@ -68,10 +68,10 @@ VMware blocks macOS as a guest OS by default. The unlocker patches this.
 1. Select your VM and click **Edit virtual machine settings**
 2. **Memory**: 8192 MB
 3. **Processors**: 2+, check "Virtualize Intel VT-x/EPT"
-4. **CD/DVD (SATA)**: Browse → select `LongQT-OpenCore-v0.7.iso`
+4. **CD/DVD (SATA)**: Browse → select `macOS-Sequoia-15.7.7.iso`
    - Check **Connect at power on**
 5. Click **Add** → **CD/DVD Drive** → **SATA**
-   - Browse → select `macOS-Sequoia-15.7.7.iso`
+   - Browse → select `LongQT-OpenCore-v0.7.iso`
    - Check **Connect at power on**
 6. **Display**: Check **Accelerate 3D graphics** (optional but helps)
 7. Click **OK**

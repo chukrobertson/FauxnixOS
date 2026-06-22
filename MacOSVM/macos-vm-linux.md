@@ -23,6 +23,8 @@ The script will:
 - Prompt for the macOS ISO path (or find it in the current dir)
 - Create an 80 GB virtual disk (`macos-disk.qcow2`)
 - Boot the VM and expose it over VNC for TigerVNC
+- Mount the macOS installer ISO as DVD slot 1 and the OpenCore helper ISO as
+  DVD slot 2; this keeps the OpenCore picker from showing only utility entries.
 
 By default on the Fauxnix ThinkPad, TigerVNC should connect to:
 
@@ -97,8 +99,8 @@ qemu-system-x86_64 \
   -smp 4 -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=0,media=cdrom \
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=1,media=cdrom \
+  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom \
+  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom \
   -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
   -device e1000-82545em,netdev=net0 \
   -netdev user,id=net0 \
@@ -116,8 +118,8 @@ qemu-system-x86_64 \
   -smp 4 -m 8192 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OVMF_VARS" \
-  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=0,media=cdrom \
-  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=1,media=cdrom \
+  -drive file=macOS-Sequoia-15.7.7.iso,format=raw,if=ide,index=0,media=cdrom \
+  -drive file=LongQT-OpenCore-v0.7.iso,format=raw,if=ide,index=1,media=cdrom \
   -drive file=macos-disk.qcow2,format=qcow2,if=ide,index=2,media=disk \
   -device e1000-82545em,netdev=net0 \
   -netdev user,id=net0 \
