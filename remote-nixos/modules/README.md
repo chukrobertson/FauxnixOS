@@ -16,6 +16,8 @@ Keep `configuration.nix` small. Put behavior in the module that owns it.
   runtime data path, archive root, and firewall access.
 - `node-desktop.nix`: browser desktop web service on port 8765, LAN firewall
   access, and kiosk-friendly environment.
+- `smb-shares.nix`: Tailscale-bound Samba shares for archive access from
+  trusted tailnet devices.
 - `system-packages.nix`: system package list and simple command wrappers.
 
 When a change updates agent guidance, update `remote-nixos/docs/knowledge/` and
