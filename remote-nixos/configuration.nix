@@ -24,6 +24,7 @@ in
     ./modules/agent-runtime.nix
     ./modules/archivist-web.nix
     ./modules/admin-panel.nix
+    ./modules/admin-agent.nix
     ./modules/smb-shares.nix
     ./modules/desktop-wayfire.nix
     ./modules/wall-display.nix

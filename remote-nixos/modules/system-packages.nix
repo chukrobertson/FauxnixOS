@@ -15,11 +15,11 @@ let
     fauxnixCanvas
     fauxnixNode
     fauxnixAdminPanel
+    fauxnixAdminAgent
     fauxnixRofi
     fauxnixThreadLauncher
     fauxPass
     fauxnixScreenshot
-    fauxnixSettings
     fauxnixSddmTheme
     fauxnixWallDisplay
     fauxnixArchivist
@@ -46,6 +46,7 @@ in
     fauxnixCanvas
     fauxnixNode
     fauxnixAdminPanel
+    fauxnixAdminAgent
     fauxnixRofi
     fauxnixThreadLauncher
     fauxPass

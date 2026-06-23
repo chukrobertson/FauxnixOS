@@ -124,6 +124,15 @@ let
       exec ${pkgs.python3}/bin/python3 ${../wall-display}/server.py "$@"
     '';
   };
+  fauxnixAdminAgent = pkgs.writeShellApplication {
+    name = "fauxnix-admin-agent";
+    runtimeInputs = [
+      pkgs.python3
+    ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../admin-agent}/server.py "$@"
+    '';
+  };
   fauxnixSddmTheme = pkgs.stdenvNoCC.mkDerivation {
     pname = "fauxnix-sddm-theme";
     version = "0.3.0";
@@ -2283,6 +2292,7 @@ in
       fauxnixNode
       fauxnixAdminPanel
       fauxnixWallDisplay
+      fauxnixAdminAgent
       fauxnixSddmTheme
       fennixPython
       fennixChatLauncher

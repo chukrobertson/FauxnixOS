@@ -193,6 +193,90 @@ document.getElementById('wall-open').addEventListener('click', () => {
   window.open(`http://${host}:8780/`, '_blank');
 });
 
+/* ── Agent Chat ── */
+
+const chatState = { history: [] };
+
+async function loadAgentStatus() {
+  const statusEl = document.getElementById("agent-status");
+  try {
+    const resp = await fetch(agentUrl("/api/status"), { cache: "no-store" });
+    const data = await resp.json();
+    statusEl.textContent = data.ok ? `online (${data.models.length} models)` : "offline";
+    statusEl.className = data.ok ? "hint ok" : "hint bad";
+    if (data.models.length) {
+      const select = document.getElementById("chat-model");
+      select.innerHTML = "";
+      for (const m of data.models) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        if (m === "llama3.2" || m.includes("llama")) opt.selected = true;
+        select.appendChild(opt);
+      }
+    }
+  } catch {
+    statusEl.textContent = "offline";
+    statusEl.className = "hint bad";
+  }
+}
+
+function agentUrl(path) {
+  const host = window.location.hostname || "127.0.0.1";
+  return `http://${host}:8757${path}`;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addChatMessage("user", text);
+  const sendBtn = document.getElementById("chat-send");
+  sendBtn.disabled = true;
+  sendBtn.textContent = "Waiting...";
+  try {
+    const resp = await fetch(agentUrl("/api/chat"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history: chatState.history }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      addChatMessage("assistant", data.response);
+      chatState.history.push({ role: "user", content: text });
+      chatState.history.push({ role: "assistant", content: data.response });
+    } else {
+      addChatMessage("error", data.error || "Request failed");
+    }
+  } catch (err) {
+    addChatMessage("error", err.message);
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Send";
+  }
+}
+
+function addChatMessage(role, text) {
+  const container = document.getElementById("chat-messages");
+  const msg = document.createElement("div");
+  msg.className = `chat-msg ${role}`;
+  const body = document.createElement("div");
+  body.className = "chat-msg-body";
+  body.textContent = text;
+  msg.appendChild(body);
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+}
+
+document.getElementById("chat-send").addEventListener("click", sendChatMessage);
+document.getElementById("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+});
+
 /* ── Drive Inbox ── */
 
 let driveState = { devices: [], mounts: {}, browsePath: null, selectedFiles: new Set() };
@@ -426,7 +510,9 @@ tickClock();
 refresh();
 loadWallSettings();
 loadDrives();
+loadAgentStatus();
 setInterval(tickClock, 1000);
 setInterval(refresh, 10000);
 setInterval(loadWallSettings, 15000);
 setInterval(loadDrives, 10000);
+setInterval(loadAgentStatus, 15000);

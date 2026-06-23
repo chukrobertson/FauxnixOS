@@ -390,6 +390,106 @@ pre {
   cursor: not-allowed;
 }
 
+/* ── Chat Panel ── */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 380px;
+  max-height: 520px;
+}
+.chat-panel .panel-head {
+  flex-shrink: 0;
+}
+.chat-admin {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  min-height: 0;
+}
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  min-height: 200px;
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-msg.user {
+  align-items: flex-end;
+}
+.chat-msg.assistant {
+  align-items: flex-start;
+}
+.chat-msg-body {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.chat-msg.user .chat-msg-body {
+  background: var(--accent);
+  color: #000;
+  border-bottom-right-radius: 2px;
+}
+.chat-msg.assistant .chat-msg-body {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 2px;
+}
+.chat-msg.error .chat-msg-body {
+  background: color-mix(in srgb, var(--danger), transparent 80%);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chat-model-select {
+  flex-shrink: 0;
+  width: auto;
+  min-width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.chat-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.chat-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.chat-input-row button {
+  flex-shrink: 0;
+  padding: 6px 14px;
+}
+
 @media (max-width: 760px) {
   .shell {
     width: min(100vw - 24px, 1180px);

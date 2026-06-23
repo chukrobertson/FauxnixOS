@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Fauxnix Node</title>
+    <title>Admin Panel</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <div>
-          <p class="eyebrow">Fauxnix Archivist</p>
-          <h1 id="host">Admin Panel</h1>
+          <p class="eyebrow">Fauxnix Admin Panel</p>
+          <h1 id="host">System Admin</h1>
           <p class="subtle" id="system">Waiting for node status...</p>
         </div>
         <div class="clock">
@@ -92,6 +92,27 @@
               </div>
             </div>
             <p class="subtle" id="drive-result"></p>
+          </div>
+        </article>
+
+        <article class="panel chat-panel">
+          <div class="panel-head">
+            <h2>Fauxnix Admin Chat</h2>
+            <span class="hint" id="agent-status">connecting...</span>
+          </div>
+          <div class="chat-admin">
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-msg assistant">
+                <div class="chat-msg-body">Hello! I'm the Fauxnix Admin Manager. Ask me about your system configuration, or request changes.</div>
+              </div>
+            </div>
+            <div class="chat-input-row">
+              <select id="chat-model" class="chat-model-select" title="Model">
+                <option value="llama3.2">llama3.2</option>
+              </select>
+              <input type="text" id="chat-input" class="chat-input" placeholder="Ask about your system..." autocomplete="off">
+              <button id="chat-send" type="button">Send</button>
+            </div>
           </div>
         </article>
 
