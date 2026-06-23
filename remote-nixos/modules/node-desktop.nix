@@ -1,4 +1,4 @@
-{ fauxnix, ... }:
+{ lib, fauxnix, ... }:
 
 let
   inherit (fauxnix.packages) fauxnixNodeDesktop;
@@ -18,6 +18,7 @@ in
       NIXOS_OZONE_WL = "1";
       QT_QPA_PLATFORM = "wayland;xcb";
       GDK_BACKEND = "wayland,x11";
+      PATH = lib.mkForce "/run/wrappers/bin:/run/current-system/sw/bin:/usr/bin";
     };
     serviceConfig = {
       ExecStart = "${fauxnixNodeDesktop}/bin/fauxnix-node-desktop --host 0.0.0.0 --port 8765";

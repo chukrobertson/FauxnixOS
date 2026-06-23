@@ -51,6 +51,50 @@
           <p class="subtle" id="action-result">Archivist opens in this browser. App launch buttons still require the laptop kiosk.</p>
         </article>
 
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Wall Display</h2>
+            <span class="hint" id="wall-status">checking...</span>
+          </div>
+          <div class="wall-admin">
+            <label class="field-row">
+              <span>Zipcode</span>
+              <input type="text" id="wall-zipcode" placeholder="e.g. 10001" maxlength="10">
+              <button id="wall-zipcode-save" type="button">Save</button>
+            </label>
+            <label class="field-row">
+              <span>Calendar URL</span>
+              <input type="url" id="wall-cal-url" placeholder="https://...ics">
+              <button id="wall-cal-save" type="button">Save</button>
+            </label>
+            <div class="action-row">
+              <button id="wall-sync" type="button">Sync Calendar Now</button>
+              <button id="wall-open" type="button">Open Wall Display</button>
+            </div>
+            <p class="subtle" id="wall-result"></p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Drive Inbox</h2>
+            <span class="hint" id="drive-status">checking...</span>
+          </div>
+          <div class="drive-admin">
+            <div id="drive-error" class="drive-error" style="display:none"></div>
+            <div id="drive-list" class="drive-list"></div>
+            <div id="drive-browse" class="drive-browse" style="display:none">
+              <div class="drive-breadcrumb" id="drive-breadcrumb"></div>
+              <div class="drive-file-list" id="drive-file-list"></div>
+              <div class="drive-selected-bar" id="drive-selected-bar">
+                <span id="drive-selected-count">0 selected</span>
+                <button id="drive-import-btn" type="button" disabled>Add to Archive</button>
+              </div>
+            </div>
+            <p class="subtle" id="drive-result"></p>
+          </div>
+        </article>
+
         <article class="panel wide">
           <div class="panel-head">
             <h2>Network</h2>

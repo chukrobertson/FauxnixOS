@@ -114,6 +114,16 @@ let
       exec ${pkgs.python3}/bin/python3 ${../node-desktop}/server.py "$@"
     '';
   };
+  fauxnixWallDisplay = pkgs.writeShellApplication {
+    name = "fauxnix-wall-display";
+    runtimeInputs = [
+      pkgs.python3
+      pkgs.systemd
+    ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../wall-display}/server.py "$@"
+    '';
+  };
   fauxnixSddmTheme = pkgs.stdenvNoCC.mkDerivation {
     pname = "fauxnix-sddm-theme";
     version = "0.3.0";
@@ -2272,6 +2282,7 @@ in
       fauxnixCanvas
       fauxnixNode
       fauxnixNodeDesktop
+      fauxnixWallDisplay
       fauxnixSddmTheme
       fennixPython
       fennixChatLauncher

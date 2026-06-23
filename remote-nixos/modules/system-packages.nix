@@ -21,6 +21,7 @@ let
     fauxnixScreenshot
     fauxnixSettings
     fauxnixSddmTheme
+    fauxnixWallDisplay
     fauxnixArchivist
     fauxnixArchivistWeb
     ;
@@ -51,6 +52,7 @@ in
     fauxnixScreenshot
     fauxnixSettings
     fauxnixSddmTheme
+    fauxnixWallDisplay
     fauxnixArchivistWeb
     git
     iw

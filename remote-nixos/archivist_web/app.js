@@ -1239,6 +1239,280 @@ async function loadDashboard() {
   }
 }
 
+/* ── Drive Inbox ────────────────────────────────────────── */
+
+let driveSelectedPaths = new Set();
+let driveCurrentPath = null;
+let driveBreadcrumbs = [];
+let drivePollTimer = null;
+
+async function loadDrives() {
+  try {
+    const data = await getJSON("/api/drives");
+    renderDriveList(data.drives || []);
+  } catch (err) {
+    const list = document.getElementById("driveList");
+    if (list) {
+      list.innerHTML = "";
+      list.appendChild(el("div", "compact-output", `Drive scan: ${err.message}`));
+    }
+  }
+}
+
+function driveIcon(drive) {
+  if (drive.transport === "usb") return "&#128427;";
+  if (drive.transport === "sata") return "&#128190;";
+  return "&#128190;";
+}
+
+function formatSize(size) {
+  if (!size) return "";
+  const match = size.match(/^([\d.]+)([A-Z])/);
+  if (!match) return size;
+  return `${Number(match[1]).toFixed(1)} ${match[2]}B`;
+}
+
+function renderDriveList(drives) {
+  const list = document.getElementById("driveList");
+  const status = document.getElementById("driveListStatus");
+  if (!list) return;
+  list.innerHTML = "";
+
+  const mountable = drives.filter(d => d.mountable && d.fstype);
+  const mounted = drives.filter(d => d.mounted);
+
+  if (!mountable.length && !mounted.length) {
+    if (status) status.textContent = "No external drives detected.";
+    const empty = el("div", "compact-output", "Plug in a USB drive or external disk to see it here.");
+    list.appendChild(empty);
+    return;
+  }
+
+  if (status) status.textContent = `${mounted.length} mounted, ${mountable.length} available`;
+
+  mounted.forEach(drive => {
+    const item = el("div", "drive-item");
+    item.innerHTML = `
+      <span class="drive-item-icon">${driveIcon(drive)}</span>
+      <div class="drive-item-info">
+        <div class="drive-item-name">${drive.label || drive.device} <span style="color:var(--accent-mint)">&#9679;</span></div>
+        <div class="drive-item-meta">${formatSize(drive.size)} ${drive.fstype} &middot; mounted at ${drive.mountpoint}</div>
+      </div>
+      <div class="drive-item-actions">
+        <button class="drive-browse-btn" data-path="${drive.mountpoint}">Browse</button>
+        <button class="drive-unmount-btn" data-mountpoint="${drive.mountpoint}">Unmount</button>
+      </div>`;
+    item.querySelector(".drive-browse-btn")?.addEventListener("click", () => browseDrive(drive.mountpoint));
+    item.querySelector(".drive-unmount-btn")?.addEventListener("click", () => unmountDrive(drive.mountpoint));
+    list.appendChild(item);
+  });
+
+  mountable.forEach(drive => {
+    const item = el("div", "drive-item");
+    item.innerHTML = `
+      <span class="drive-item-icon">${driveIcon(drive)}</span>
+      <div class="drive-item-info">
+        <div class="drive-item-name">${drive.label || drive.device}</div>
+        <div class="drive-item-meta">${formatSize(drive.size)} ${drive.fstype} &middot; not mounted</div>
+      </div>
+      <div class="drive-item-actions">
+        <button class="drive-mount-btn" data-device="${drive.device}">Mount</button>
+      </div>`;
+    item.querySelector(".drive-mount-btn")?.addEventListener("click", () => mountDrive(drive.device));
+    list.appendChild(item);
+  });
+}
+
+async function mountDrive(device) {
+  try {
+    const data = await postJSON("/api/drives/mount", {path: device});
+    if (data.ok) {
+      await loadDrives();
+      browseDrive(data.mountpoint);
+    } else {
+      alert(`Mount failed: ${data.error}`);
+    }
+  } catch (err) {
+    alert(`Mount error: ${err.message}`);
+  }
+}
+
+async function unmountDrive(mountpoint) {
+  try {
+    const data = await postJSON("/api/drives/unmount", {path: mountpoint});
+    if (data.ok) {
+      driveCurrentPath = null;
+      driveBreadcrumbs = [];
+      driveSelectedPaths.clear();
+      document.getElementById("driveBrowser").style.display = "none";
+      await loadDrives();
+    } else {
+      alert(`Unmount failed: ${data.error}`);
+    }
+  } catch (err) {
+    alert(`Unmount error: ${err.message}`);
+  }
+}
+
+function formatFileTime(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleDateString([], {month: "short", day: "numeric"});
+}
+
+async function browseDrive(path) {
+  driveCurrentPath = path;
+  driveSelectedPaths.clear();
+  document.getElementById("driveSelectedCount").textContent = "0 selected";
+  document.getElementById("driveImportBtn").disabled = true;
+  const browser = document.getElementById("driveBrowser");
+  browser.style.display = "block";
+  const fileList = document.getElementById("driveFileList");
+  fileList.innerHTML = `<div class="drive-browser-loading">Loading...</div>`;
+
+  try {
+    const data = await postJSON("/api/drives/browse", {path});
+    renderDriveBrowser(data);
+  } catch (err) {
+    fileList.innerHTML = "";
+    fileList.appendChild(el("div", "compact-output", `Browse error: ${err.message}`));
+  }
+}
+
+function renderDriveBrowser(data) {
+  const breadcrumb = document.getElementById("driveBreadcrumb");
+  const fileList = document.getElementById("driveFileList");
+  fileList.innerHTML = "";
+
+  // breadcrumbs
+  breadcrumb.innerHTML = "";
+  const parts = data.path.replace(/^\/+/, "").split("/");
+  let accumulated = "";
+  const resetBtn = el("button", null, "Drives");
+  resetBtn.type = "button";
+  resetBtn.onclick = () => { driveCurrentPath = null; document.getElementById("driveBrowser").style.display = "none"; };
+  breadcrumb.appendChild(resetBtn);
+
+  parts.forEach((part, index) => {
+    accumulated += "/" + part;
+    const crumb = el("button", null, part || "/");
+    crumb.type = "button";
+    crumb.onclick = () => browseDrive(accumulated);
+    breadcrumb.appendChild(crumb);
+  });
+
+  if (data.parent && data.parent !== data.path) {
+    const upBtn = el("button", null, "..");
+    upBtn.type = "button";
+    upBtn.onclick = () => browseDrive(data.parent);
+    breadcrumb.appendChild(upBtn);
+  }
+
+  // entries
+  const entries = data.entries || [];
+  if (!entries.length) {
+    fileList.appendChild(el("div", "compact-output", "Empty directory."));
+    return;
+  }
+
+  entries.forEach(entry => {
+    const row = el("div", "drive-file-row");
+    if (entry.is_dir) row.classList.add("is-dir");
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = driveSelectedPaths.has(entry.path);
+    cb.addEventListener("change", () => {
+      if (cb.checked) driveSelectedPaths.add(entry.path);
+      else driveSelectedPaths.delete(entry.path);
+      updateDriveSelection();
+    });
+    row.appendChild(cb);
+
+    const icon = el("span", "file-icon", entry.is_dir ? "&#128193;" : "&#128196;");
+    row.appendChild(icon);
+
+    const nameSpan = el("span", "file-name", entry.name);
+    row.appendChild(nameSpan);
+
+    if (!entry.is_dir) {
+      const meta = el("span", "file-meta", `${formatSizeText(entry.size)} &middot; ${formatFileTime(entry.modified_ts)}`);
+      row.appendChild(meta);
+    }
+
+    if (entry.is_dir) {
+      row.addEventListener("dblclick", () => browseDrive(entry.path));
+    }
+
+    fileList.appendChild(row);
+  });
+}
+
+function formatSizeText(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = bytes / 1024;
+  let unitIdx = 0;
+  while (size >= 1024 && unitIdx < units.length - 1) {
+    size /= 1024;
+    unitIdx += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unitIdx]}`;
+}
+
+function updateDriveSelection() {
+  const count = driveSelectedPaths.size;
+  document.getElementById("driveSelectedCount").textContent = `${count} selected`;
+  document.getElementById("driveImportBtn").disabled = count === 0;
+}
+
+async function driveImportSelected() {
+  const paths = Array.from(driveSelectedPaths);
+  if (!paths.length) return;
+  const btn = document.getElementById("driveImportBtn");
+  const status = document.getElementById("driveImportStatus");
+  btn.disabled = true;
+  btn.textContent = "Importing...";
+  status.textContent = "";
+  try {
+    const data = await postJSON("/api/drives/import-multi", {paths});
+    if (data.ok) {
+      const ok = data.results.filter(r => r.ok).length;
+      const fail = data.results.filter(r => !r.ok).length;
+      status.textContent = `Imported ${ok} items to archive inbox${fail ? `, ${fail} failed` : ""}.`;
+      status.style.color = "var(--accent-mint)";
+      driveSelectedPaths.clear();
+      updateDriveSelection();
+      // refresh the current browse view
+      if (driveCurrentPath) await browseDrive(driveCurrentPath);
+      else await loadDrives();
+    } else {
+      status.textContent = `Import failed: ${data.error || "unknown error"}`;
+      status.style.color = "var(--danger)";
+    }
+  } catch (err) {
+    status.textContent = `Import error: ${err.message}`;
+    status.style.color = "var(--danger)";
+  }
+  btn.disabled = false;
+  btn.textContent = "Add to Archive";
+}
+
+function startDrivePoll() {
+  if (drivePollTimer) return;
+  loadDrives();
+  drivePollTimer = window.setInterval(loadDrives, 10000);
+}
+
+function stopDrivePoll() {
+  if (drivePollTimer) {
+    clearInterval(drivePollTimer);
+    drivePollTimer = null;
+  }
+}
+
+/* ── End Drive Inbox ────────────────────────────────────── */
+
 function enginePlanText(data = {}) {
   if (data.structured_summary) return data.structured_summary;
   const plan = data.structured_plan || {};
@@ -4720,6 +4994,9 @@ document.getElementById("refreshNotesBtn").onclick = loadNotes;
 document.getElementById("refreshModelsBtn").onclick = loadModels;
 document.getElementById("refreshLocationsBtn").onclick = loadArchiveLocations;
 document.getElementById("refreshDashboardBtn").onclick = loadDashboard;
+document.getElementById("refreshDrivesBtn").onclick = loadDrives;
+document.getElementById("driveImportBtn").onclick = driveImportSelected;
+window.setTimeout(startDrivePoll, 500);
 document.getElementById("refreshConstellationCardBtn").onclick = loadConstellationCard;
 document.getElementById("discoveryRefreshBtn").onclick = loadDiscovery;
 document.getElementById("adminChatForm").addEventListener("submit", event => {

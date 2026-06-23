@@ -9,6 +9,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,9 @@ STARTED_AT = time.time()
 PORT = int(os.environ.get("FAUXNIX_NODE_DESKTOP_PORT", "8765"))
 HOST = os.environ.get("FAUXNIX_NODE_DESKTOP_HOST", "0.0.0.0")
 ARCHIVIST_PORT = int(os.environ.get("FAUXNIX_ARCHIVIST_WEB_PORT", "8776"))
+INBOX_DIR = Path(os.environ.get("FAUXNIX_INBOX", os.path.expanduser("~/Archive/INBOX"))).expanduser()
+SYS_BLOCK = Path("/sys/block")
+DRIVE_IMPORT_STATE = Path(tempfile.gettempdir()) / "fauxnix-drive-import.json"
 
 LOCAL_ACTIONS = {
     "archivist": ["chromium", "--new-window", f"http://127.0.0.1:{ARCHIVIST_PORT}/"],
@@ -206,6 +210,161 @@ def _status(port: int) -> dict:
     }
 
 
+# ── Drive Inbox ──────────────────────────────────────────────────────
+
+
+def _list_block_devices() -> list[dict]:
+    if not SYS_BLOCK.is_dir():
+        return []
+    devices = []
+    for entry in sorted(SYS_BLOCK.iterdir()):
+        if not entry.is_dir():
+            continue
+        device = entry.name
+        if device.startswith("loop") or device.startswith("ram"):
+            continue
+        removable = (entry / "removable").read_text().strip() == "1" if (entry / "removable").is_file() else False
+        size_bytes = int((entry / "size").read_text().strip()) * 512 if (entry / "size").is_file() else 0
+        model = ""
+        vendor = ""
+        for sub in ("device",):
+            model_file = entry / sub / "model"
+            vendor_file = entry / sub / "vendor"
+            if model_file.is_file():
+                model = model_file.read_text().strip()
+            if vendor_file.is_file():
+                vendor = vendor_file.read_text().strip()
+        info: dict = {
+            "device": f"/dev/{device}",
+            "model": model or "",
+            "vendor": vendor or "",
+            "size": size_bytes,
+            "sizeHuman": _human_size(size_bytes),
+            "removable": removable,
+            "partitions": [],
+        }
+        for part_entry in sorted(entry.iterdir()):
+            pname = part_entry.name
+            if pname.startswith(device):
+                psize = int((part_entry / "size").read_text().strip()) * 512 if (part_entry / "size").is_file() else 0
+                info["partitions"].append({"device": f"/dev/{pname}", "size": psize, "sizeHuman": _human_size(psize)})
+        devices.append(info)
+    return devices
+
+
+def _human_size(b: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.0f} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
+def _get_mounts() -> dict[str, str]:
+    result: dict[str, str] = {}
+    try:
+        content = Path("/proc/mounts").read_text()
+        for line in content.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                result[parts[0]] = parts[1]
+    except Exception:
+        pass
+    return result
+
+
+def _mount_device(dev: str) -> dict:
+    try:
+        Path(INBOX_DIR).mkdir(parents=True, exist_ok=True)
+        mounts = _get_mounts()
+        if dev in mounts:
+            return {"ok": True, "mountPoint": mounts[dev], "already": True}
+        result = subprocess.run(
+            ["sudo", "mount", dev, str(INBOX_DIR)],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": result.stderr.strip() or "mount failed"}
+        return {"ok": True, "mountPoint": str(INBOX_DIR)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _unmount_device(dev: str) -> dict:
+    try:
+        result = subprocess.run(
+            ["sudo", "umount", dev],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": result.stderr.strip() or "umount failed"}
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _browse_directory(path: str) -> dict:
+    try:
+        p = Path(path).resolve()
+        if not p.is_dir():
+            return {"ok": False, "error": f"not a directory: {path}"}
+        entries = []
+        for entry in sorted(p.iterdir()):
+            entries.append({
+                "name": entry.name,
+                "path": str(entry),
+                "isDir": entry.is_dir(),
+                "size": entry.stat().st_size if entry.is_file() else 0,
+                "sizeHuman": _human_size(entry.stat().st_size) if entry.is_file() else "",
+            })
+        return {"ok": True, "entries": entries, "currentPath": str(p)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _import_file(src: str) -> dict:
+    try:
+        src_path = Path(src).resolve()
+        if not src_path.is_file():
+            return {"ok": False, "error": f"not a file: {src}"}
+        Path(INBOX_DIR).mkdir(parents=True, exist_ok=True)
+        dest = INBOX_DIR / src_path.name
+        if dest.exists():
+            stem = dest.stem
+            suffix = dest.suffix
+            counter = 1
+            while dest.exists():
+                dest = INBOX_DIR / f"{stem}_{counter}{suffix}"
+                counter += 1
+        shutil.copy2(src_path, dest)
+        return {"ok": True, "dest": str(dest)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _import_files(paths: list[str]) -> dict:
+    results = []
+    for path in paths:
+        r = _import_file(path)
+        results.append(r)
+    return {"ok": True, "results": results}
+
+
+def _load_import_state() -> list[dict]:
+    try:
+        if DRIVE_IMPORT_STATE.exists():
+            return json.loads(DRIVE_IMPORT_STATE.read_text())
+    except Exception:
+        pass
+    return []
+
+
+def _save_import_state(entries: list[dict]) -> None:
+    DRIVE_IMPORT_STATE.write_text(json.dumps(entries, indent=2, default=str))
+
+
+# ── Handler ──────────────────────────────────────────────────────────
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "FauxnixNodeDesktop/0.1"
 
@@ -217,12 +376,61 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self._json({"ok": True})
             return
+        if path == "/api/drives":
+            self._json({"ok": True, "devices": _list_block_devices(), "mounts": _get_mounts()})
+            return
+        if path == "/api/drives/imports":
+            self._json({"ok": True, "imports": _load_import_state()})
+            return
+        if path == "/api/drives/browse":
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            params = dict(pair.split("=", 1) for pair in qs.split("&") if "=" in pair)
+            dir_path = unquote(params.get("path", str(INBOX_DIR)))
+            self._json(_browse_directory(dir_path))
+            return
         if path == "/":
             path = "/index.html"
         self._static(path)
 
     def do_POST(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+
+        # Drive endpoints — allowed from LAN
+        if path == "/api/drives/mount":
+            dev = body.get("device", "")
+            self._json(_mount_device(dev))
+            return
+        if path == "/api/drives/unmount":
+            dev = body.get("device", "")
+            self._json(_unmount_device(dev))
+            return
+        if path == "/api/drives/browse":
+            dir_path = body.get("path", str(INBOX_DIR))
+            self._json(_browse_directory(dir_path))
+            return
+        if path == "/api/drives/import":
+            file_path = body.get("path", "")
+            result = _import_file(file_path)
+            state = _load_import_state()
+            if result.get("ok"):
+                state.append({"src": file_path, "dest": result["dest"], "ts": time.time()})
+                _save_import_state(state)
+            self._json(result)
+            return
+        if path == "/api/drives/import-multi":
+            paths = body.get("paths", [])
+            result = _import_files(paths)
+            state = _load_import_state()
+            for r in result.get("results", []):
+                if r.get("ok"):
+                    state.append({"src": r.get("src", "?"), "dest": r["dest"], "ts": time.time()})
+            _save_import_state(state)
+            self._json(result)
+            return
+
+        # Legacy local-kiosk-only actions
         prefix = "/api/actions/"
         if not path.startswith(prefix):
             self.send_error(HTTPStatus.NOT_FOUND)

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "updated": "",
+  "events": [
+    {"date": "2026-06-23", "time": "08:00", "title": "Breakfast", "color": "#ff7800"},
+    {"date": "2026-06-23", "time": "12:00", "title": "Lunch", "color": "#00c8ff"},
+    {"date": "2026-06-23", "time": "15:00", "title": "Pick up kids", "color": "#4fe18a"},
+    {"date": "2026-06-23", "time": "18:00", "title": "Dinner", "color": "#ff7800"},
+    {"date": "2026-06-24", "time": "08:00", "title": "Breakfast", "color": "#ff7800"},
+    {"date": "2026-06-24", "time": "09:00", "title": "Dentist appointment", "color": "#ff3366"},
+    {"date": "2026-06-25", "time": "18:00", "title": "Movie night", "color": "#00c8ff"},
+    {"date": "2026-06-28", "time": "10:00", "title": "Farmers market", "color": "#4fe18a"},
+    {"date": "2026-07-04", "time": "20:00", "title": "Fireworks", "color": "#ff7800"},
+    {"date": "2026-07-12", "time": "14:00", "title": "Family barbecue", "color": "#ff7800"}
+  ]
+}

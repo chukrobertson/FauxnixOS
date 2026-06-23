@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fauxnix Wall</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="wall">
+      <header class="top-bar">
+        <div class="brand">
+          <svg class="fox" viewBox="0 0 72 70" fill="none">
+            <path d="M36 17L17 4L5 10L16 39L27 57L36 66L45 57L56 39L67 10L55 4L36 17Z" stroke="var(--accent)" stroke-width="6" stroke-linejoin="miter"/>
+            <path d="M25 36L33 42L21 44Z" fill="var(--accent)"/>
+            <path d="M47 36L39 42L51 44Z" fill="var(--accent)"/>
+          </svg>
+          <span class="brand-name">Fauxnix</span>
+        </div>
+        <div class="top-info">
+          <div class="weather" id="weather">
+            <span class="weather-icon" id="weather-icon">&#x2601;</span>
+            <span class="weather-temp" id="weather-temp">--&deg;</span>
+          </div>
+          <div class="clock-block">
+            <span class="clock-time" id="time">--:--</span>
+            <span class="clock-date" id="date">loading</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="calendar-section">
+        <div class="calendar-nav">
+          <button id="prev-month" type="button">&lsaquo;</button>
+          <h2 class="month-title" id="month-title">Month</h2>
+          <button id="next-month" type="button">&rsaquo;</button>
+        </div>
+        <table class="calendar-grid" id="calendar-grid">
+          <thead>
+            <tr>
+              <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+            </tr>
+          </thead>
+          <tbody id="calendar-body"></tbody>
+        </table>
+      </section>
+
+      <section class="events-panel" id="events-panel">
+        <h2 class="events-heading">Today&rsquo;s Events</h2>
+        <div class="events-list" id="events-list">
+          <p class="subtle" id="events-empty">No events today</p>
+        </div>
+      </section>
+
+      <footer class="bottom-bar">
+        <span class="status-indicator" id="status-dot"></span>
+        <span id="status-text">Connected</span>
+        <span class="sep">&middot;</span>
+        <span id="host-display">Fauxnix Wall</span>
+        <span class="sep">&middot;</span>
+        <span id="disk-info">--</span>
+      </footer>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

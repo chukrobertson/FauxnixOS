@@ -18,6 +18,7 @@ Keep `configuration.nix` small. Put behavior in the module that owns it.
   access, and kiosk-friendly environment.
 - `smb-shares.nix`: Tailscale-bound Samba shares for archive access from
   trusted tailnet devices.
+- `wall-display.nix`: family calendar kiosk served on port 8780 for wall-mounted displays.
 - `system-packages.nix`: system package list and simple command wrappers.
 
 When a change updates agent guidance, update `remote-nixos/docs/knowledge/` and

@@ -26,6 +26,7 @@ in
     ./modules/node-desktop.nix
     ./modules/smb-shares.nix
     ./modules/desktop-wayfire.nix
+    ./modules/wall-display.nix
     ./modules/system-packages.nix
   ];
 

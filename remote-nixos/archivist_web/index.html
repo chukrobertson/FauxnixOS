@@ -156,6 +156,31 @@
               <div class="memory-list" id="memoryPanel"></div>
             </section>
 
+            <section class="home-card home-card-wide reorderable-card" data-card-id="drive-inbox">
+              <div class="section-head">
+                <h2>Drive Inbox</h2>
+                <div class="row-actions">
+                  <button id="refreshDrivesBtn" type="button">Refresh</button>
+                </div>
+              </div>
+              <div class="dashboard-card-body" id="driveInboxPanel">
+                <div class="dashboard-line">
+                  <div class="dashboard-line-title">Connected drives</div>
+                  <div class="dashboard-line-body" id="driveListStatus">Scanning for drives...</div>
+                </div>
+                <div class="drive-list" id="driveList"></div>
+                <div class="drive-browser" id="driveBrowser" style="display:none">
+                  <div class="drive-breadcrumb" id="driveBreadcrumb"></div>
+                  <div class="drive-file-list" id="driveFileList"></div>
+                  <div class="drive-selected-bar">
+                    <span class="field-value" id="driveSelectedCount">0 selected</span>
+                    <button id="driveImportBtn" type="button" disabled>Add to Archive</button>
+                  </div>
+                </div>
+                <div class="compact-output" id="driveImportStatus"></div>
+              </div>
+            </section>
+
             <section class="home-card home-card-wide reorderable-card" data-card-id="looking-for">
               <div class="section-head">
                 <h2>Looking For</h2>

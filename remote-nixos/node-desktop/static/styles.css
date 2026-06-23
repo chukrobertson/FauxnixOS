@@ -165,6 +165,57 @@ dd {
   gap: 10px;
 }
 
+.wall-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.field-row span {
+  color: var(--muted);
+  min-width: 62px;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.field-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.field-row input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.field-row button {
+  flex-shrink: 0;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.action-row button {
+  flex: 1;
+}
+
 .url-list {
   display: grid;
   gap: 8px;
@@ -205,6 +256,138 @@ pre {
 
 .bad {
   color: var(--danger);
+}
+
+/* ── Drive Inbox ── */
+.drive-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.drive-error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger), transparent 85%);
+  border: 1px solid var(--danger);
+  border-radius: 5px;
+  padding: 8px;
+  font-size: 0.85rem;
+}
+.drive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.drive-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 0.85rem;
+}
+.drive-item .drive-icon {
+  font-size: 1.2rem;
+}
+.drive-item .drive-info {
+  flex: 1;
+  min-width: 0;
+}
+.drive-item .drive-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.drive-item .drive-detail {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.drive-item button {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+}
+.drive-browse {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.drive-breadcrumb {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+.drive-breadcrumb span {
+  color: var(--muted);
+}
+.drive-breadcrumb a {
+  color: var(--cyan);
+  cursor: pointer;
+  text-decoration: none;
+}
+.drive-breadcrumb a:hover {
+  color: var(--accent);
+}
+.drive-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.drive-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  cursor: default;
+}
+.drive-file-row:hover {
+  background: var(--panel-strong);
+}
+.drive-file-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.drive-file-row .file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.drive-file-row .file-size {
+  color: var(--muted);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.drive-file-row.is-dir .file-name {
+  color: var(--cyan);
+}
+.drive-selected-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.drive-selected-bar button {
+  padding: 5px 12px;
+  font-size: 0.78rem;
+}
+.drive-selected-bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 @media (max-width: 760px) {

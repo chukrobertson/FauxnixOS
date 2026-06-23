@@ -35,6 +35,14 @@ from app.cowriter import (
 )
 from app.constellation import data_constellation
 from app.db import clear_file_index, init_db, get_conn
+from app.drives import (
+    browse_directory,
+    import_to_archive,
+    list_drives,
+    mount_drive,
+    recent_imports,
+    unmount_drive,
+)
 from app.discovery import discovery_constellation
 from app.explorer import list_explorer_directory
 from app.models import (
@@ -3653,6 +3661,43 @@ def api_archive_location_additional(req: ArchiveLocationRequest):
 @app.post("/api/archive-locations/remove")
 def api_archive_location_remove(req: ArchiveLocationRequest):
     return remove_additional_root(req.path)
+
+
+@app.get("/api/drives")
+def api_drives():
+    return {"drives": list_drives()}
+
+
+@app.post("/api/drives/mount")
+def api_drive_mount(req: ArchiveLocationRequest):
+    return mount_drive(req.path)
+
+
+@app.post("/api/drives/unmount")
+def api_drive_unmount(req: ArchiveLocationRequest):
+    return unmount_drive(req.path)
+
+
+@app.post("/api/drives/browse")
+def api_drive_browse(req: ArchiveLocationRequest):
+    return browse_directory(req.path)
+
+
+@app.post("/api/drives/import")
+def api_drive_import(req: ArchiveLocationRequest):
+    return import_to_archive([req.path])
+
+
+@app.post("/api/drives/import-multi")
+async def api_drive_import_multi(req: Request):
+    body = await req.json()
+    paths = (body if isinstance(body, list) else body.get("paths") or []) if body else []
+    return import_to_archive(paths)
+
+
+@app.get("/api/drives/imports")
+def api_drive_recent_imports():
+    return recent_imports()
 
 
 @app.get("/api/maintenance/stats")
