@@ -1,0 +1,4 @@
+.gitattributes text eol=lf
+remote-nixos/**/*.nix text eol=lf
+remote-nixos/**/*.sh text eol=lf
+remote-nixos/**/*.py text eol=lf
