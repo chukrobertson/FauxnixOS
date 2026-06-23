@@ -1,8 +1,13 @@
-{ fauxd, fauxnixCanvas, fauxnixRofi, fauxnixThreadLauncher }:
-
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, fauxnix, ... }:
 
 let
+  inherit (fauxnix.packages)
+    fauxd
+    fauxnixCanvas
+    fauxnixRofi
+    fauxnixThreadLauncher
+    ;
+
   fauxnixWaybarConfig = pkgs.writeText "waybar-config.jsonc" ''
     {
       "layer": "top",
