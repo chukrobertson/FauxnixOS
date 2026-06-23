@@ -13,7 +13,7 @@ in
       FAUXNIX_ADMIN_AGENT_HOST = "127.0.0.1";
       FAUXNIX_ADMIN_AGENT_PORT = "8757";
       FAUXNIX_LLM_BACKEND = "ollama";
-      FAUXNIX_LLM_MODEL = "llama3.2";
+      FAUXNIX_LLM_MODEL = "qwen2.5:0.5b-instruct";
       FAUXNIX_OLLAMA_URL = "http://127.0.0.1:11434";
       FAUXNIX_KB_DIR = "/home/chvk/.config/fauxnix/kb";
       PATH = lib.mkForce "/run/wrappers/bin:/run/current-system/sw/bin:/usr/bin";

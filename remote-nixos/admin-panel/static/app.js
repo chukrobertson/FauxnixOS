@@ -239,7 +239,7 @@ async function sendChatMessage() {
     const resp = await fetch(agentUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, history: chatState.history }),
+      body: JSON.stringify({ message: text, history: chatState.history, model: document.getElementById("chat-model").value }),
     });
     const data = await resp.json();
     if (data.ok) {

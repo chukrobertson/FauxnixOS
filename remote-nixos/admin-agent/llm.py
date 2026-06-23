@@ -24,7 +24,7 @@ def config_from_env() -> LLMConfig:
     backend = os.environ.get("FAUXNIX_LLM_BACKEND", "ollama")
     return LLMConfig(
         backend=backend,  # type: ignore
-        model=os.environ.get("FAUXNIX_LLM_MODEL", "llama3.2"),
+        model=os.environ.get("FAUXNIX_LLM_MODEL", "qwen2.5:0.5b-instruct"),
         ollama_url=os.environ.get("FAUXNIX_OLLAMA_URL", "http://127.0.0.1:11434"),
         openai_api_key=os.environ.get("FAUXNIX_OPENAI_API_KEY", ""),
         openai_base_url=os.environ.get("FAUXNIX_OPENAI_BASE_URL", "https://api.openai.com/v1"),

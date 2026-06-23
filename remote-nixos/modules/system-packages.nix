@@ -20,6 +20,7 @@ let
     fauxnixThreadLauncher
     fauxPass
     fauxnixScreenshot
+    fauxnixSettings
     fauxnixSddmTheme
     fauxnixWallDisplay
     fauxnixArchivist

@@ -104,7 +104,10 @@ class Handler(BaseHTTPRequestHandler):
         if not message:
             return {"ok": False, "error": "message is required"}
         try:
-            response = chat(message, history)
+            cfg = config_from_env()
+            if body.get("model"):
+                cfg.model = body["model"]
+            response = chat(message, history, cfg)
             return {"ok": True, "response": response}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}

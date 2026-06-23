@@ -5,10 +5,15 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
-from .kb import (
+_pkg_dir = str(Path(__file__).resolve().parent)
+if _pkg_dir not in sys.path:
+    sys.path.insert(0, _pkg_dir)
+
+from kb import (  # noqa: E402
     KB_DIR,
     MANAGER_KB,
     MODULE_DESCRIPTIONS,
@@ -18,7 +23,7 @@ from .kb import (
     read_kb,
     write_kb,
 )
-from .llm import LLMConfig, config_from_env, llm_completion
+from llm import LLMConfig, config_from_env, llm_completion  # noqa: E402
 
 
 NIXOS_CONFIG = Path("/etc/nixos")
