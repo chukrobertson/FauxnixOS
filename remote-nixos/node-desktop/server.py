@@ -29,6 +29,11 @@ LOCAL_ACTIONS = {
     "fennix": ["fennix-gui"],
 }
 
+LAUNCHER_PATHS = (
+    "/run/current-system/sw/bin",
+    "/run/wrappers/bin",
+)
+
 
 def _run(args: list[str], timeout: float = 2.0) -> str:
     try:
@@ -99,6 +104,26 @@ def _x_display() -> str:
     return ":1"
 
 
+def _launcher_path(existing: str) -> str:
+    parts = [path for path in existing.split(":") if path]
+    for path in reversed(LAUNCHER_PATHS):
+        if path not in parts:
+            parts.insert(0, path)
+    return ":".join(parts)
+
+
+def _resolve_command(command: list[str], env: dict[str, str]) -> list[str] | None:
+    if not command:
+        return None
+    program = command[0]
+    if Path(program).is_absolute():
+        return command
+    resolved = shutil.which(program, path=env.get("PATH", ""))
+    if resolved is None:
+        return None
+    return [resolved, *command[1:]]
+
+
 def _launch_local(action_id: str) -> dict:
     command = LOCAL_ACTIONS.get(action_id)
     if command is None:
@@ -112,10 +137,15 @@ def _launch_local(action_id: str) -> dict:
     env.setdefault("QT_QPA_PLATFORM", "wayland;xcb")
     env.setdefault("GDK_BACKEND", "wayland,x11")
     env.setdefault("NIXOS_OZONE_WL", "1")
+    env["PATH"] = _launcher_path(env.get("PATH", ""))
+
+    resolved_command = _resolve_command(command, env)
+    if resolved_command is None:
+        return {"ok": False, "error": f"launcher command not found: {command[0]}"}
 
     try:
         subprocess.Popen(
-            command,
+            resolved_command,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
