@@ -79,7 +79,7 @@ function render(status) {
   setText("host", status.hostname || "Fauxnix Node");
   setText("system", status.currentSystem || "No current system path reported.");
   setText("display", status.services["display-manager"], serviceClass(status.services["display-manager"]));
-  setText("node-service", status.services["fauxnix-node-desktop"], serviceClass(status.services["fauxnix-node-desktop"]));
+  setText("node-service", status.services["fauxnix-admin-panel"], serviceClass(status.services["fauxnix-admin-panel"]));
   setText("archivist-service", status.services["fauxnix-archivist-web"], serviceClass(status.services["fauxnix-archivist-web"]));
   setText("ollama", status.services.ollama, serviceClass(status.services.ollama));
   setText("tailscale", status.services.tailscaled, serviceClass(status.services.tailscaled));

@@ -68,7 +68,7 @@ let
       done
 
       if ! pgrep -u "$(id -u)" -f 'chromium.*127.0.0.1:8765' >/dev/null 2>&1; then
-        chromium_profile="$HOME/.local/share/fauxnix-node-desktop/chromium-kiosk"
+        chromium_profile="$HOME/.local/share/fauxnix-admin-panel/chromium-kiosk"
         mkdir -p "$chromium_profile"
         ${pkgs.util-linux}/bin/setsid ${pkgs.chromium}/bin/chromium \
           --ozone-platform=wayland \
@@ -79,7 +79,7 @@ let
           --disable-session-crashed-bubble \
           --password-store=basic \
           --user-data-dir="$chromium_profile" \
-          http://127.0.0.1:8765 >/tmp/fauxnix-node-desktop-kiosk.log 2>&1 &
+          http://127.0.0.1:8765 >/tmp/fauxnix-admin-panel-kiosk.log 2>&1 &
       fi
 
       if [ "''${FAUXNIX_AUTOSTART_WORKSPACE:-0}" != "1" ]; then

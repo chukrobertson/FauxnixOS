@@ -14,7 +14,7 @@ Keep `configuration.nix` small. Put behavior in the module that owns it.
   and activation-installed knowledgebase docs.
 - `archivist-web.nix`: Archivist FastAPI/browser UI service on port 8776,
   runtime data path, archive root, and firewall access.
-- `node-desktop.nix`: browser desktop web service on port 8765, LAN firewall
+- `admin-panel.nix`: browser desktop web service on port 8765, LAN firewall
   access, and kiosk-friendly environment.
 - `smb-shares.nix`: Tailscale-bound Samba shares for archive access from
   trusted tailnet devices.

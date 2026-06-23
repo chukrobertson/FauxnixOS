@@ -190,7 +190,7 @@ def _status(port: int) -> dict:
         },
         "services": {
             "display-manager": _systemctl_active("display-manager.service"),
-            "fauxnix-node-desktop": _systemctl_active("fauxnix-node-desktop.service"),
+            "fauxnix-admin-panel": _systemctl_active("fauxnix-admin-panel.service"),
             "fauxnix-archivist-web": _systemctl_active("fauxnix-archivist-web.service"),
             "ollama": _systemctl_active("ollama.service"),
             "tailscaled": _systemctl_active("tailscaled.service"),
@@ -366,7 +366,7 @@ def _save_import_state(entries: list[dict]) -> None:
 # ── Handler ──────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "FauxnixNodeDesktop/0.1"
+    server_version = "FauxnixAdminPanel/0.1"
 
     def do_GET(self) -> None:
         path = unquote(self.path.split("?", 1)[0])

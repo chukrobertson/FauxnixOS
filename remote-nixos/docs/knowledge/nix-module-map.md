@@ -17,7 +17,7 @@ Module ownership:
   XDG portals, and keyboard layout.
 - `wayfire.nix`: Wayfire package overrides, session package, autostart script,
   Chromium kiosk launch, Wayfire defaults, and Waybar config.
-- `modules/node-desktop.nix`: `fauxnix-node-desktop` systemd service, LAN
+- `modules/admin-panel.nix`: `fauxnix-admin-panel` systemd service, LAN
   firewall access for TCP 8765, and browser desktop environment defaults.
 - `modules/agent-runtime.nix`: Ollama local model service, assistant env,
   Faux-pass registry, source installs into `/etc`, and activation-installed

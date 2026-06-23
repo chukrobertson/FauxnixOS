@@ -14,7 +14,7 @@ let
     fauxnixGit
     fauxnixCanvas
     fauxnixNode
-    fauxnixNodeDesktop
+    fauxnixAdminPanel
     fauxnixRofi
     fauxnixThreadLauncher
     fauxPass
@@ -45,7 +45,7 @@ in
     fauxnixGit
     fauxnixCanvas
     fauxnixNode
-    fauxnixNodeDesktop
+    fauxnixAdminPanel
     fauxnixRofi
     fauxnixThreadLauncher
     fauxPass

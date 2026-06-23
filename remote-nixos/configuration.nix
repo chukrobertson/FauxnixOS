@@ -23,7 +23,7 @@ in
     ./modules/networking.nix
     ./modules/agent-runtime.nix
     ./modules/archivist-web.nix
-    ./modules/node-desktop.nix
+    ./modules/admin-panel.nix
     ./modules/smb-shares.nix
     ./modules/desktop-wayfire.nix
     ./modules/wall-display.nix

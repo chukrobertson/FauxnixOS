@@ -298,7 +298,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors_headers(self):
         origin = self.headers.get("Origin", "")
-        # Allow any local/tailnet origin (the node-desktop kiosk on a different port)
+        # Allow any local/tailnet origin (the admin-panel kiosk on a different port)
         if origin and ("127.0.0.1" in origin or "::1" in origin or "localhost" in origin or origin.startswith("http://100.")):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

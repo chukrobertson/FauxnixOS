@@ -102,8 +102,8 @@ let
       exec ${workspacePython}/bin/python3 ${workspaceLib}/lib/fauxnix_workspace/node_server.py "$@"
     '';
   };
-  fauxnixNodeDesktop = pkgs.writeShellApplication {
-    name = "fauxnix-node-desktop";
+  fauxnixAdminPanel = pkgs.writeShellApplication {
+    name = "fauxnix-admin-panel";
     runtimeInputs = [
       pkgs.python3
       pkgs.iproute2
@@ -111,7 +111,7 @@ let
       pkgs.systemd
     ];
     text = ''
-      exec ${pkgs.python3}/bin/python3 ${../node-desktop}/server.py "$@"
+      exec ${pkgs.python3}/bin/python3 ${../admin-panel}/server.py "$@"
     '';
   };
   fauxnixWallDisplay = pkgs.writeShellApplication {
@@ -2281,7 +2281,7 @@ in
       ollamaUpstream
       fauxnixCanvas
       fauxnixNode
-      fauxnixNodeDesktop
+      fauxnixAdminPanel
       fauxnixWallDisplay
       fauxnixSddmTheme
       fennixPython
