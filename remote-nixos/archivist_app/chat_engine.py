@@ -93,6 +93,23 @@ def delete_embeddings(doc_ids: list[str]) -> dict:
         return {"attempted": len(ids), "deleted": 0, "failed": len(ids), "error": str(e)}
 
 
+def archive_embedding_ids() -> set[str]:
+    try:
+        count = _collection.count()
+        if count == 0:
+            return set()
+        all_ids = set()
+        offset = 0
+        batch = 10000
+        while offset < count:
+            result = _collection.get(offset=offset, limit=batch)
+            all_ids.update(result.get("ids", []))
+            offset += batch
+        return all_ids
+    except Exception:
+        return set()
+
+
 def delete_embedding(doc_id: str) -> dict:
     return delete_embeddings([doc_id])
 

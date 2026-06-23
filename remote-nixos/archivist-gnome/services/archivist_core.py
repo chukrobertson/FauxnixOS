@@ -66,9 +66,13 @@ def available() -> bool:
     module_name = src.name  # "archivist_app" in Nix store, "app" in dev
     try:
         mod = importlib.import_module(module_name)
-        # If it's "app" in dev, alias to "archivist_app"
+        # Keep both import names alive: the upstream Archivist modules still
+        # use absolute imports like `from app.persona import ...`, while the
+        # Nix bundle is exposed as `archivist_app`.
         if module_name == "app":
             sys.modules["archivist_app"] = mod
+        elif module_name == "archivist_app":
+            sys.modules["app"] = mod
         _archivist_app = mod
         _loaded = True
         return True

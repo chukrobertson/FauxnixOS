@@ -31,6 +31,9 @@ class ArchivistBridge:
         self._a: ModuleType | None = None
 
     def initialize(self) -> bool:
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("FAUXNIX_ARCHIVIST_DATA", str(self._data_dir))
+        os.environ.setdefault("ARCHIVIST_DATA_DIR", str(self._data_dir))
         if not archivist_core.available():
             self._error = archivist_core.load_error() or "archivist core not available"
             return False
@@ -39,6 +42,21 @@ class ArchivistBridge:
             self._error = archivist_core.load_error() or "cannot import archivist_app"
             return False
         try:
+            for module_name in (
+                "db",
+                "config",
+                "indexer",
+                "extractors",
+                "maintenance",
+                "chat_engine",
+                "embeddings",
+                "autotagging",
+            ):
+                setattr(
+                    self._a,
+                    module_name,
+                    importlib.import_module(f"archivist_app.{module_name}"),
+                )
             self._a.db.init_db()
             self._ready = True
             return True

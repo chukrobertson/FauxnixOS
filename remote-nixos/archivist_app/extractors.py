@@ -11,6 +11,30 @@ from app.utils import guess_mime
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
+PLAIN_TEXT_EXTS: set[str] = {
+    ".txt", ".md", ".rst", ".rtf", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss", ".less",
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".cs", ".java", ".kt", ".swift",
+    ".go", ".rs", ".rb", ".php", ".pl", ".pm", ".sh", ".bash", ".zsh", ".fish",
+    ".ps1", ".bat", ".cmd", ".vbs", ".sql", ".ipynb", ".proto", ".f", ".f90",
+    ".R", ".r", ".scala", ".clj", ".elm", ".ex", ".exs", ".erl", ".hrl",
+    ".lua", ".nim", ".pas", ".dart", ".gradle", ".sbt", ".tf", ".hcl",
+    ".dockerfile", ".makefile", ".cmake", ".m", ".mm",
+    ".tex", ".bib", ".cls", ".sty",
+    ".svelte", ".vue", ".astro",
+}
+
+PLAIN_TEXT_NAMES: set[str] = {
+    "makefile", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+    "gemfile", "rakefile", "procfile", "requirements.txt",
+    ".gitignore", ".gitattributes", ".editorconfig", ".env",
+    "cargo.toml", "package.json", "tsconfig.json", "webpack.config.js",
+}
+
+
+def supports_text_extraction(path: Path) -> bool:
+    return path.suffix.lower() in PLAIN_TEXT_EXTS or path.name.lower() in PLAIN_TEXT_NAMES
+
 
 def extract_pdf_text(path: Path) -> str:
     try:

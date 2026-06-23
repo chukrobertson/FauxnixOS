@@ -1,9 +1,16 @@
 from pathlib import Path
 import json
 import os
+import shutil
+import sys
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(
+    os.getenv(
+        "ARCHIVIST_DATA_DIR",
+        os.getenv("FAUXNIX_ARCHIVIST_DATA", str(BASE_DIR / "data")),
+    )
+).expanduser()
 UPLOAD_DIR = DATA_DIR / "uploads"
 CLIPBOARD_DIR = DATA_DIR / "clipboard"
 NOTES_DIR = DATA_DIR / "notes"
@@ -22,8 +29,9 @@ for p in [
 ]:
     p.mkdir(parents=True, exist_ok=True)
 
-LOCAL_DEFAULT_ARCHIVE_ROOT = BASE_DIR.parent / "SharedBackup"
-DEFAULT_ARCHIVE_ROOT = LOCAL_DEFAULT_ARCHIVE_ROOT if LOCAL_DEFAULT_ARCHIVE_ROOT.exists() else Path(r"Z:\Archive")
+DEFAULT_ARCHIVE_ROOT = BASE_DIR.parent / "SharedBackup"
+if not DEFAULT_ARCHIVE_ROOT.exists():
+    DEFAULT_ARCHIVE_ROOT = Path("~/Archive").expanduser()
 
 
 def configured_archive_root() -> str:
@@ -61,9 +69,8 @@ if ARCHIVE_ROOT.exists():
             p.mkdir(parents=True, exist_ok=True)
         except PermissionError:
             pass
-
-    OLLAMA_ARCHIVIST_MODEL = os.getenv("OLLAMA_ARCHIVIST_MODEL", "RageBait/LadySophiaNoctua:latest")
-    OLLAMA_COWRITER_MODEL = os.getenv("OLLAMA_COWRITER_MODEL", "gemma4:12b")
+OLLAMA_ARCHIVIST_MODEL = os.getenv("OLLAMA_ARCHIVIST_MODEL", "RageBait/LadySophiaNoctua:latest")
+OLLAMA_COWRITER_MODEL = os.getenv("OLLAMA_COWRITER_MODEL", "gemma4:12b")
 OLLAMA_FAST_MODEL = os.getenv("OLLAMA_FAST_MODEL", "lfm2.5:8b")
 OLLAMA_CODER_MODEL = os.getenv("OLLAMA_CODER_MODEL", "gemma4:12b")
 OLLAMA_FAST_CODER_MODEL = os.getenv("OLLAMA_FAST_CODER_MODEL", "minicpm-v4.6:latest")
@@ -84,7 +91,15 @@ OLLAMA_ADMIN_APPLY_READINESS_MODEL = os.getenv("OLLAMA_ADMIN_APPLY_READINESS_MOD
 OLLAMA_ADMIN_PATCH_APPLY_MODEL = os.getenv("OLLAMA_ADMIN_PATCH_APPLY_MODEL", "gemma4:12b")
 OLLAMA_ADMIN_VERIFICATION_CHECKS_MODEL = os.getenv("OLLAMA_ADMIN_VERIFICATION_CHECKS_MODEL", "minicpm-v4.6:latest")
 
-TESSERACT_CMD = os.getenv(
-    "TESSERACT_CMD",
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+def _default_tesseract_cmd() -> str:
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    if sys.platform == "win32":
+        win_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if Path(win_path).exists():
+            return win_path
+    return "tesseract"
+
+
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", _default_tesseract_cmd())

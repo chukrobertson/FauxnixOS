@@ -274,6 +274,24 @@ def recategorize_file_index() -> dict:
     }
 
 
+def file_tags_for_display(path: str) -> list[str]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT t.name FROM tags t
+        JOIN file_tags ft ON ft.tag_id = t.id
+        JOIN files f ON f.id = ft.file_id
+        WHERE f.path = ?
+        ORDER BY t.name COLLATE NOCASE
+        """,
+        (path,),
+    )
+    tags = [row["name"] for row in cur.fetchall()]
+    conn.close()
+    return tags
+
+
 def list_tags() -> list[dict]:
     conn = get_conn()
     cur = conn.cursor()
@@ -878,6 +896,46 @@ def duplicate_groups(limit: int = 30, offset: int = 0) -> dict:
         groups.append(group_dict)
     conn.close()
     return {"groups": groups, "total": total, "limit": limit, "offset": offset}
+
+
+def index_failure_triage(limit: int = 50, error_limit: int = 5) -> dict:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS count FROM index_failures WHERE resolved = 0")
+    total = int(cur.fetchone()["count"])
+    cur.execute(
+        """
+        SELECT path, COUNT(*) AS raw_count, MIN(error) AS error,
+               MAX(created_ts) AS last_ts, MIN(created_ts) AS first_ts
+        FROM index_failures
+        WHERE resolved = 0
+        GROUP BY path
+        ORDER BY last_ts DESC
+        LIMIT ? OFFSET 0
+        """,
+        (max(1, min(int(limit), 500)),),
+    )
+    groups = []
+    for row in cur.fetchall():
+        item = dict(row)
+        item["failures"] = _iter_index_failures_for_path(cur, item["path"], error_limit)
+        groups.append(item)
+    conn.close()
+    return {"groups": groups, "total": total, "limit": limit}
+
+
+def _iter_index_failures_for_path(cur, path: str, error_limit: int) -> list[dict]:
+    cur.execute(
+        """
+        SELECT id, error, created_ts
+        FROM index_failures
+        WHERE path = ? AND resolved = 0
+        ORDER BY created_ts DESC
+        LIMIT ?
+        """,
+        (path, max(1, min(int(error_limit), 50))),
+    )
+    return [dict(r) for r in cur.fetchall()]
 
 
 def record_index_failure(path: str, error: str) -> None:

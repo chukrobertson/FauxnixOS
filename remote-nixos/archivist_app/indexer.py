@@ -246,6 +246,15 @@ def is_unchanged(existing: dict | None, stat: os.stat_result) -> bool:
     )
 
 
+def is_indexed(path: Path) -> bool:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM files WHERE path = ? AND COALESCE(deleted_candidate, 0) = 0", (str(path),))
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
 def index_file(path: Path, force: bool = False):
     if not path.exists() or not path.is_file():
         return None

@@ -165,5 +165,38 @@ def policy_key(path_text: str | Path) -> str:
     return normalize_source_path(path_text).lower()
 
 
+CHAT_AWARE_MAX_FILE_BYTES = 100 * 1024 * 1024
+
+CHAT_IGNORED_PARTS: set[str] = {
+    "_ARCHIVE_REVIEW", "_ARCHIVE_DUP_REVIEW", "_INBOX",
+    ".git", "__pycache__", ".venv", "node_modules",
+    ".trash", "$recycle.bin", "System Volume Information",
+}
+
+
+def is_chat_aware_content_path(path_text: str) -> bool:
+    if not path_text or not is_chat_safe_source(path_text):
+        return False
+    parts = set(Path(path_text).parts)
+    if parts & CHAT_IGNORED_PARTS:
+        return False
+    return True
+
+
+def is_chat_aware_embedding_candidate(path_text: str, *, category: str = "", size_bytes: int = 0) -> bool:
+    if not path_text or not is_chat_aware_content_path(path_text):
+        return False
+    if size_bytes:
+        return size_bytes <= CHAT_AWARE_MAX_FILE_BYTES
+    try:
+        return Path(path_text).stat().st_size <= CHAT_AWARE_MAX_FILE_BYTES
+    except OSError:
+        return False
+
+
+def is_chat_aware_text_content_path(path_text: str) -> bool:
+    return is_chat_aware_content_path(path_text)
+
+
 def is_chat_safe_source(path_text: str | Path) -> bool:
     return bool(source_policy(path_text).get("chat_safe"))

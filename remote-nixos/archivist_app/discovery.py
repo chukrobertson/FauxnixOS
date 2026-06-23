@@ -77,18 +77,15 @@ def _drive_candidates() -> list[dict]:
                     )
                 )
         return nodes
-
-    for root in ["/", str(Path.home())]:
-        if path_available(root):
-            nodes.append(
-                _path_node(
-                    node_id=_node_id("path", root),
-                    label=root,
-                    path=root,
-                    group="drive",
-                    preferred_policy="chat_aware",
-                )
-            )
+    try:
+        for mount in Path("/media").iterdir() if Path("/media").exists() else []:
+            nodes.append(_path_node(node_id=_node_id("drive", str(mount)), label=str(mount), path=str(mount), group="drive", preferred_policy="chat_aware"))
+        for mount in Path("/mnt").iterdir() if Path("/mnt").exists() else []:
+            nodes.append(_path_node(node_id=_node_id("drive", str(mount)), label=str(mount), path=str(mount), group="drive", preferred_policy="chat_aware"))
+        for mount in Path("/Volumes").iterdir() if Path("/Volumes").exists() else []:
+            nodes.append(_path_node(node_id=_node_id("drive", str(mount)), label=str(mount), path=str(mount), group="drive", preferred_policy="chat_aware"))
+    except OSError:
+        pass
     return nodes
 
 

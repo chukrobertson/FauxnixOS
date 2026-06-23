@@ -81,6 +81,8 @@ pkgs.stdenv.mkDerivation {
     export GI_TYPELIB_PATH="${girepos}"
     export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
     export PATH="${pkgs.lib.makeBinPath runtimeTools}:$PATH"
+    export FAUXNIX_ARCHIVIST_DATA="''${FAUXNIX_ARCHIVIST_DATA:-$HOME/.local/share/fauxnix-archivist}"
+    export ARCHIVIST_DATA_DIR="''${ARCHIVIST_DATA_DIR:-$FAUXNIX_ARCHIVIST_DATA}"
     archivist_lib="${archivistLibPath}"
     if [ -n "$archivist_lib" ]; then
       export PYTHONPATH="$ARCHLIBDIR/lib/fauxnix-archivist:$archivist_lib''${PYTHONPATH:+:$PYTHONPATH}"
