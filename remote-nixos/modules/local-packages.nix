@@ -12,6 +12,11 @@ let
     # Sync from E:\Archivist\app\ before rebuilding on the remote.
     archivistAppSrc = ../archivist_app;
   };
+  fauxnixArchivistWeb = import ../archivist-web {
+    inherit pkgs;
+    archivistAppSrc = ../archivist_app;
+    archivistWebSrc = ../archivist_web;
+  };
   workspaceLib = pkgs.stdenvNoCC.mkDerivation {
     pname = "fauxnix-workspace-lib";
     version = "0.1.0";
@@ -2261,6 +2266,7 @@ in
     inherit
       workspacePython
       fauxnixArchivist
+      fauxnixArchivistWeb
       workspaceLib
       ollamaUpstream
       fauxnixCanvas

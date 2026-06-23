@@ -37,6 +37,28 @@ function renderUrls(status) {
     a.textContent = url;
     urls.appendChild(a);
   }
+
+  const archivistUrls = document.getElementById("archivist-urls");
+  const archivist = status.archivist || {};
+  const archivistAll = [archivist.loopbackUrl, ...(archivist.lanUrls || [])].filter(Boolean);
+  archivistUrls.innerHTML = "";
+  if (archivistAll.length) {
+    const label = document.createElement("span");
+    label.textContent = "Archivist:";
+    archivistUrls.appendChild(label);
+    for (const url of archivistAll) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.textContent = url;
+      archivistUrls.appendChild(a);
+    }
+  }
+}
+
+function updateArchivistLink() {
+  const link = document.getElementById("archivist-link");
+  const host = window.location.hostname || "127.0.0.1";
+  link.href = `http://${host}:8776/`;
 }
 
 function renderProcesses(status) {
@@ -58,10 +80,12 @@ function render(status) {
   setText("system", status.currentSystem || "No current system path reported.");
   setText("display", status.services["display-manager"], serviceClass(status.services["display-manager"]));
   setText("node-service", status.services["fauxnix-node-desktop"], serviceClass(status.services["fauxnix-node-desktop"]));
+  setText("archivist-service", status.services["fauxnix-archivist-web"], serviceClass(status.services["fauxnix-archivist-web"]));
   setText("ollama", status.services.ollama, serviceClass(status.services.ollama));
   setText("tailscale", status.services.tailscaled, serviceClass(status.services.tailscaled));
   setText("uptime", status.systemUptime || `${status.serverUptimeSeconds}s server uptime`);
   setText("disk", `${formatBytes(status.disk.used)} used of ${formatBytes(status.disk.total)} (${status.disk.percent}%)`);
+  updateArchivistLink();
   renderUrls(status);
   renderProcesses(status);
 }

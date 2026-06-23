@@ -22,6 +22,7 @@ let
     fauxnixSettings
     fauxnixSddmTheme
     fauxnixArchivist
+    fauxnixArchivistWeb
     ;
 in
 {
@@ -50,6 +51,7 @@ in
     fauxnixScreenshot
     fauxnixSettings
     fauxnixSddmTheme
+    fauxnixArchivistWeb
     git
     iw
     jq

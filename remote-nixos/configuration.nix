@@ -22,6 +22,7 @@ in
     ./modules/base-system.nix
     ./modules/networking.nix
     ./modules/agent-runtime.nix
+    ./modules/archivist-web.nix
     ./modules/node-desktop.nix
     ./modules/desktop-wayfire.nix
     ./modules/system-packages.nix

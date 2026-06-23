@@ -21,10 +21,10 @@ STATIC = ROOT / "static"
 STARTED_AT = time.time()
 PORT = int(os.environ.get("FAUXNIX_NODE_DESKTOP_PORT", "8765"))
 HOST = os.environ.get("FAUXNIX_NODE_DESKTOP_HOST", "0.0.0.0")
+ARCHIVIST_PORT = int(os.environ.get("FAUXNIX_ARCHIVIST_WEB_PORT", "8776"))
 
 LOCAL_ACTIONS = {
     "terminal": ["alacritty"],
-    "archivist": ["fauxnix-archivist"],
     "workspace": ["fauxnix-workspace"],
     "fennix": ["fennix-gui"],
 }
@@ -166,6 +166,10 @@ def _status(port: int) -> dict:
         "currentSystem": _readlink("/run/current-system"),
         "lanUrls": _addresses(port),
         "loopbackUrl": f"http://127.0.0.1:{port}",
+        "archivist": {
+            "loopbackUrl": f"http://127.0.0.1:{ARCHIVIST_PORT}",
+            "lanUrls": _addresses(ARCHIVIST_PORT),
+        },
         "disk": {
             "total": usage.total,
             "used": usage.used,
@@ -175,6 +179,7 @@ def _status(port: int) -> dict:
         "services": {
             "display-manager": _systemctl_active("display-manager.service"),
             "fauxnix-node-desktop": _systemctl_active("fauxnix-node-desktop.service"),
+            "fauxnix-archivist-web": _systemctl_active("fauxnix-archivist-web.service"),
             "ollama": _systemctl_active("ollama.service"),
             "tailscaled": _systemctl_active("tailscaled.service"),
         },
@@ -183,10 +188,10 @@ def _status(port: int) -> dict:
             "kiosk": _pgrep("chromium.*127.0.0.1:8765"),
             "fauxd": _pgrep("fauxd.py"),
             "workspace": _pgrep("fauxnix-workspace"),
+            "archivist": _pgrep("uvicorn app.main:app"),
         },
         "actions": [
             {"id": "terminal", "label": "Terminal", "localOnly": True},
-            {"id": "archivist", "label": "Archivist", "localOnly": True},
             {"id": "workspace", "label": "Workspace", "localOnly": True},
             {"id": "fennix", "label": "Fennix", "localOnly": True},
         ],

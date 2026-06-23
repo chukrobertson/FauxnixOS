@@ -31,5 +31,32 @@ Get-ChildItem -Path $src -Recurse -File | Where-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $target
 }
 
+# Keep the bundled backend writable when it runs from the read-only Nix store.
+$configPath = Join-Path $dst "config.py"
+if (Test-Path -LiteralPath $configPath) {
+    $configText = Get-Content -LiteralPath $configPath -Raw
+    $dataDirPatch = @'
+DATA_DIR = Path(
+    os.getenv(
+        "ARCHIVIST_DATA_DIR",
+        os.getenv("FAUXNIX_ARCHIVIST_DATA", str(BASE_DIR / "data")),
+    )
+).expanduser()
+'@.Trim()
+    $configText = $configText.Replace('DATA_DIR = BASE_DIR / "data"', $dataDirPatch)
+    Set-Content -LiteralPath $configPath -Value $configText -NoNewline
+}
+
+# Serve generated previews/thumbs from the configured runtime data directory.
+$mainPath = Join-Path $dst "main.py"
+if (Test-Path -LiteralPath $mainPath) {
+    $mainText = Get-Content -LiteralPath $mainPath -Raw
+    $mainText = $mainText.Replace(
+        'app.mount("/data", StaticFiles(directory="data"), name="data")',
+        'app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")'
+    )
+    Set-Content -LiteralPath $mainPath -Value $mainText -NoNewline
+}
+
 $count = (Get-ChildItem -Path $dst -Recurse -File).Count
 Write-Host "Copied $count files. Ready for Nix build."

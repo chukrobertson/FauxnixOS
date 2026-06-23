@@ -114,7 +114,8 @@ h2 {
   margin-bottom: 16px;
 }
 
-button {
+button,
+.action-link {
   appearance: none;
   border: 1px solid var(--line);
   background: var(--panel-strong);
@@ -123,10 +124,17 @@ button {
   padding: 10px 13px;
   font: inherit;
   cursor: pointer;
+  text-align: center;
+  text-decoration: none;
 }
 
-button:hover {
+button:hover,
+.action-link:hover {
   border-color: var(--accent);
+}
+
+.action-link.primary {
+  border-color: color-mix(in srgb, var(--accent), var(--line) 35%);
 }
 
 .facts {
@@ -160,6 +168,16 @@ dd {
 .url-list {
   display: grid;
   gap: 8px;
+}
+
+.secondary-urls {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.secondary-urls span {
+  color: var(--muted);
 }
 
 .url-list a {

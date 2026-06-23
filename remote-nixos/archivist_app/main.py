@@ -241,7 +241,7 @@ from app.worker import run_watcher
 app = FastAPI(title="AI Archivist OS")
 app.middleware("http")(private_access_middleware)
 app.mount("/web", StaticFiles(directory="web"), name="web")
-app.mount("/data", StaticFiles(directory="data"), name="data")
+app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
 
 INDEX_ALLOWED_ROOTS = [ARCHIVE_ROOT, DATA_DIR]
 index_job_lock = threading.Lock()

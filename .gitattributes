@@ -6,3 +6,4 @@ remote-nixos/**/*.md text eol=lf
 remote-nixos/**/*.html text eol=lf
 remote-nixos/**/*.css text eol=lf
 remote-nixos/**/*.js text eol=lf
+remote-nixos/archivist_web/**/*.png binary

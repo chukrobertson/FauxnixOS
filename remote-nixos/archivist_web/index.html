@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Archivist</title>
+  <script>
+    (() => {
+      const theme = localStorage.getItem("archivist.theme") === "light" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="stylesheet" href="/web/styles.css?v=20260609-gemma4">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-title">
+        <span>Local archive OS</span>
+        <strong>Archivist</strong>
+      </div>
+      <nav class="mode-tabs top-mode-tabs" aria-label="Workspace tabs">
+        <button class="mode-tab active" data-view="home" type="button">Home</button>
+        <button class="mode-tab" data-view="maintenance" type="button">Archive</button>
+      </nav>
+      <nav class="subtab-bar" aria-label="Workspace subtabs">
+        <div class="subtab-group active" data-subtabs-for="home">
+          <button class="subtab active" data-view="home" type="button">Dashboard</button>
+          <button class="subtab" data-view="notes" type="button">Notes</button>
+          <button class="subtab" data-view="chat" type="button">Co-writer</button>
+        </div>
+        <div class="subtab-group" data-subtabs-for="maintenance">
+          <button class="subtab active" data-view="maintenance" data-scroll-card="index" type="button">System</button>
+          <button class="subtab" data-view="explorer" type="button">Explorer</button>
+          <button class="subtab" data-view="maintenance" data-scroll-card="files" type="button">File View</button>
+          <button class="subtab" data-view="maintenance" data-scroll-card="dedupe" type="button">Dedupe</button>
+          <button class="subtab" data-view="maintenance" data-scroll-card="locations" type="button">Sources</button>
+          <button class="subtab" data-view="audio" type="button">Audio</button>
+          <button class="subtab" data-view="video" type="button">Video</button>
+        </div>
+      </nav>
+    </header>
+
+    <aside class="rail left-rail">
+      <header class="brand">
+        <button class="brand-mark theme-toggle" id="themeToggleBtn" type="button" aria-label="Switch theme" title="Switch theme">D</button>
+        <div>
+          <h1>Archivist</h1>
+          <div class="status-line" id="status">Idle</div>
+          <div class="model-badge" id="activeModelBadge">Archivist route loading</div>
+        </div>
+      </header>
+
+      <section class="avatar-stage" id="avatarStage" aria-label="Archivist avatar">
+        <div class="avatar-bg"></div>
+        <img id="avatarFg" src="/web/AvaTar/AvaPoses/AvaPose1.png" alt="Archivist avatar" draggable="false">
+      </section>
+
+      <div class="left-card-stack" id="leftRailCards">
+      <section class="tool-section left-card clipboard-card reorderable-card" data-card-id="clipboard">
+        <div class="section-head">
+          <h2>Clipboard</h2>
+          <div class="row-actions">
+            <button id="clipboardPasteBtn" type="button">Paste</button>
+            <button id="clipboardSaveBtn" type="button">Save</button>
+            <button id="clipboardClearBtn" type="button">Clear</button>
+          </div>
+        </div>
+        <textarea id="clipboardInput" class="clipboard-input" rows="3" placeholder="Paste text, links, paths, or quick fragments"></textarea>
+        <div class="clipboard-dropzone" id="clipboardDropzone" tabindex="0">Drop files here</div>
+        <div class="clipboard-list" id="clipboardList"></div>
+        <div class="clipboard-scroll-actions">
+          <button id="clipboardScrollUpBtn" type="button">Up</button>
+          <button id="clipboardScrollDownBtn" type="button">Down</button>
+        </div>
+      </section>
+
+      <section class="tool-section threads-section left-card reorderable-card" id="threadsSection" data-card-id="threads">
+        <div class="section-head">
+          <h2>Threads</h2>
+          <div class="row-actions">
+            <button id="toggleThreadsBtn" type="button">Hide</button>
+            <button class="icon-button" id="newChatBtn" type="button" title="New thread">+</button>
+          </div>
+        </div>
+        <div class="conversation-list" id="conversationList"></div>
+      </section>
+
+      <section class="tool-section cowriter-chat-panel left-card reorderable-card" data-card-id="chat">
+        <div class="section-head">
+          <h2 id="chatPanelTitle">Archivist Chat</h2>
+          <button id="clearCowriterChatBtn" type="button">Clear</button>
+        </div>
+        <section class="messages side-messages" id="messages"></section>
+        <form class="side-composer" id="chatForm">
+          <textarea id="chatInput" placeholder="Ask the Archivist..." rows="4"></textarea>
+          <button id="chatBtn" type="submit">Send</button>
+        </form>
+      </section>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="app-view home-pane active" id="homeView">
+        <header class="maintenance-header home-header">
+          <div>
+            <h2>Home</h2>
+            <div class="memory-count">Dashboard, notes, activity, and ambient context</div>
+          </div>
+          <div class="row-actions">
+            <button id="refreshDashboardBtn" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="home-body">
+          <section class="home-activity-strip">
+            <div>
+              <div class="eyebrow">Active Surface</div>
+              <h2>Continuity dashboard</h2>
+            </div>
+          </section>
+
+          <section class="home-card-grid" id="homeDashboardCards">
+            <section class="home-card reorderable-card" data-card-id="weather">
+              <div class="section-head">
+                <h2>Weather</h2>
+              </div>
+              <div class="dashboard-card-body" id="weatherPanel"></div>
+            </section>
+
+            <section class="home-card reorderable-card" data-card-id="calendar">
+              <div class="section-head">
+                <h2>Calendar</h2>
+              </div>
+              <div class="dashboard-card-body" id="calendarPanel"></div>
+            </section>
+
+            <section class="home-card reorderable-card" data-card-id="archive-activity">
+              <div class="section-head">
+                <h2>Archive Activity</h2>
+              </div>
+              <div class="dashboard-card-body" id="greetingPanel"></div>
+              <div class="dashboard-card-body" id="archiveActivityPanel"></div>
+            </section>
+
+            <section class="home-card reorderable-card" data-card-id="keep-sweep">
+              <div class="section-head">
+                <h2>Keep/Sweep</h2>
+              </div>
+              <div class="dashboard-card-body">
+                <div class="dashboard-line">
+                  <div class="dashboard-line-title">Review mode</div>
+                  <div class="dashboard-line-body">Keep, revisit, archive, queue delete.</div>
+                </div>
+              </div>
+              <div class="memory-list" id="memoryPanel"></div>
+            </section>
+
+            <section class="home-card home-card-wide reorderable-card" data-card-id="looking-for">
+              <div class="section-head">
+                <h2>Looking For</h2>
+              </div>
+              <div class="results-list" id="results"></div>
+            </section>
+
+            <section class="home-card home-card-wide constellation-card reorderable-card" data-card-id="constellation">
+              <div class="section-head">
+                <h2>Data Constellation</h2>
+                <button id="refreshConstellationCardBtn" type="button">Refresh</button>
+              </div>
+              <div class="constellation-card-body">
+                <div class="constellation-mini-map" id="constellationMiniMap">
+                  <svg class="discovery-links" id="constellationMiniLinks" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+                  <div class="discovery-nodes" id="constellationMiniNodes"></div>
+                </div>
+                <div class="constellation-card-detail">
+                  <div class="memory-count" id="constellationCardSummary">Waiting for constellation data.</div>
+                  <div class="dashboard-card-body" id="constellationCardDetail"></div>
+                </div>
+              </div>
+            </section>
+          </section>
+        </section>
+      </section>
+
+      <section class="app-view cowriter-pane" id="chatView">
+        <header class="cowriter-header">
+          <div>
+            <h2>Co-writer</h2>
+            <div class="memory-count" id="memoryStatus">Memory: 0</div>
+            <div class="memory-count path-status" id="cowriterPathStatus">Current draft not loaded.</div>
+          </div>
+          <div class="row-actions">
+            <button id="openDraftBtn" type="button">Reload Draft</button>
+            <button id="saveDraftBtn" type="button">Save Draft</button>
+            <button id="saveVersionBtn" type="button">Save Version</button>
+          </div>
+        </header>
+
+        <section class="cowriter-body">
+          <div class="cowriter-toolbar">
+            <button id="askCowriterBtn" type="button">Ask</button>
+            <button id="editSelectionBtn" type="button">Edit Selection</button>
+            <button id="askSelectionBtn" type="button">Ask Selection</button>
+            <label class="writing-help-control" for="writingHelpMode">
+              <span>Writing help</span>
+              <select id="writingHelpMode">
+                <option value="voice">Voice</option>
+                <option value="structure">Structure</option>
+                <option value="memoir">Memoir</option>
+                <option value="scene">Scene</option>
+                <option value="technical">Technical</option>
+                <option value="tighten">Tighten</option>
+                <option value="brainstorm">Brainstorm</option>
+              </select>
+            </label>
+            <button id="helpWriteBtn" type="button">Help Write</button>
+            <button id="previewDraftBtn" type="button">Preview Draft</button>
+          </div>
+          <textarea id="cowriterEditor" class="cowriter-editor" spellcheck="true"></textarea>
+          <section class="cowriter-timeline-panel">
+            <div class="section-head">
+              <h2>File Timeline</h2>
+              <button id="refreshTimelineBtn" type="button">Refresh</button>
+            </div>
+            <div class="timeline-list" id="fileTimeline"></div>
+          </section>
+          <div class="compact-output" id="cowriterStatus">Ready</div>
+        </section>
+      </section>
+
+      <section class="app-view media-tool-pane" id="audioView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Audio</h2>
+            <div class="memory-count">Listening, recording, and audio notes</div>
+          </div>
+          <div class="row-actions">
+            <button type="button">Import</button>
+            <button type="button">Record</button>
+            <button type="button">Transcript</button>
+          </div>
+        </header>
+
+        <section class="media-tool-body">
+          <section class="media-card media-card-wide">
+            <div class="section-head">
+              <h2>Session</h2>
+              <div class="file-count">chat aware</div>
+            </div>
+            <div class="audio-console">
+              <button type="button">Listen</button>
+              <button type="button">Mark</button>
+              <button type="button">Clip</button>
+              <button type="button">Note</button>
+            </div>
+            <div class="media-dropzone">Drop audio here</div>
+            <textarea class="media-note-pad" rows="8" placeholder="Audio notes"></textarea>
+          </section>
+
+          <section class="media-card">
+            <div class="section-head">
+              <h2>Queue</h2>
+            </div>
+            <div class="media-list">
+              <div class="dashboard-line">
+                <div class="dashboard-line-title">Listening queue</div>
+                <div class="dashboard-line-body">Imported recordings, voice notes, interviews, and extracted audio will stack here.</div>
+              </div>
+              <div class="dashboard-line">
+                <div class="dashboard-line-title">Transcripts</div>
+                <div class="dashboard-line-body">Timestamped notes and speaker-aware text will attach to archive files.</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="media-card">
+            <div class="section-head">
+              <h2>Signal</h2>
+            </div>
+            <div class="meter-grid" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="compact-output">Audio context is ready for routing.</div>
+          </section>
+        </section>
+      </section>
+
+      <section class="app-view media-tool-pane" id="videoView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Video</h2>
+            <div class="memory-count" id="videoToolSubtitle">FFmpeg context, storyboard, and timeline tagging</div>
+          </div>
+          <div class="row-actions">
+            <button id="videoProbeBtn" type="button">Probe</button>
+            <button id="videoAnalyzeBtn" type="button">Storyboard</button>
+            <button id="videoTranscribeBtn" type="button">Transcribe</button>
+            <button id="videoScanArchiveBtn" type="button">Index archive videos</button>
+            <button id="videoStopScanBtn" type="button">Stop scan</button>
+            <button id="videoSearchBtn" type="button">Search</button>
+          </div>
+        </header>
+
+        <section class="media-tool-body">
+          <section class="media-card media-card-wide">
+            <div class="section-head">
+              <h2>Video Context</h2>
+              <div class="file-count" id="videoFfmpegState">checking</div>
+            </div>
+            <div class="video-pathbar">
+              <input id="videoPathInput" type="text" placeholder="Drop/paste a video path or enter an indexed file id">
+              <button id="videoLoadContextBtn" type="button">Load</button>
+            </div>
+            <div class="video-analyze-row">
+              <label class="number-field">
+                Scan preset
+                <select id="videoPresetSelect">
+                  <option value="standard_survey">Standard survey</option>
+                </select>
+              </label>
+              <label class="number-field">
+                Every seconds
+                <input id="videoIntervalInput" type="number" min="5" max="3600" value="60">
+              </label>
+              <label class="number-field">
+                Max frames
+                <input id="videoMaxFramesInput" type="number" min="1" max="120" value="48">
+              </label>
+              <label class="check-row">
+                <input id="videoUpdateIndexToggle" type="checkbox" checked>
+                update search index
+              </label>
+              <label class="check-row">
+                <input id="videoDetectFacesToggle" type="checkbox" checked>
+                detect faces
+              </label>
+              <label class="check-row">
+                <input id="videoDetectObjectsToggle" type="checkbox">
+                detect objects
+              </label>
+              <label class="check-row">
+                <input id="videoRescanExistingToggle" type="checkbox">
+                rescan existing
+              </label>
+            </div>
+            <div class="compact-output" id="videoStatus">Video tools not loaded.</div>
+            <div class="compact-output" id="videoArchiveScanStatus">Archive video scan not started.</div>
+            <div class="video-scan-summary" id="videoScanSummary"></div>
+            <div class="video-stage" id="videoStage">
+              <div class="video-playhead"></div>
+              <div class="video-stage-empty">Load a video to build a searchable context timeline.</div>
+            </div>
+            <div class="video-storyboard" id="videoStoryboard"></div>
+          </section>
+
+          <section class="media-card">
+            <div class="section-head">
+              <h2>Context Search</h2>
+            </div>
+            <div class="video-search-row">
+              <input id="videoSearchInput" type="search" placeholder="Search video notes, timelines, tags, associations">
+              <button id="videoSearchSubmitBtn" type="button">Go</button>
+            </div>
+            <div class="video-results" id="videoResults"></div>
+          </section>
+
+          <section class="media-card">
+            <div class="section-head">
+              <h2>Timeline Segment</h2>
+            </div>
+            <div class="video-segment-form">
+              <input id="videoSegmentTitleInput" type="text" placeholder="Segment title">
+              <textarea id="videoSegmentSummaryInput" rows="5" placeholder="What happens here? Names, context, reason this matters..."></textarea>
+              <div class="video-time-row">
+                <input id="videoSegmentStartInput" type="number" min="0" step="0.1" value="0" placeholder="Start seconds">
+                <input id="videoSegmentEndInput" type="number" min="0" step="0.1" placeholder="End seconds">
+              </div>
+              <input id="videoSegmentTimelineInput" type="text" placeholder="Timeline, e.g. family-history, project-demo">
+              <input id="videoSegmentTagsInput" type="text" placeholder="Tags, comma separated">
+              <input id="videoSegmentAssociationsInput" type="text" placeholder="Associations, comma separated">
+              <button id="videoSaveSegmentBtn" type="button">Save segment</button>
+            </div>
+            <div class="compact-output">Manual segments update the indexed video context when the video is already in the archive index.</div>
+          </section>
+        </section>
+      </section>
+
+      <section class="app-view maintenance-pane" id="maintenanceView">
+        <header class="maintenance-header">
+          <div>
+            <h2>System</h2>
+            <div class="memory-count" id="maintenanceSubtitle">Index, admin, and archive care workbench</div>
+          </div>
+          <button id="maintenanceRefreshBtn" type="button">Refresh</button>
+        </header>
+
+        <section class="maintenance-body" id="maintenanceCards">
+          <section class="maintenance-card index-card operations-card reorderable-card" data-card-id="index">
+            <div class="section-head">
+              <h2>Archive Operations</h2>
+              <div class="file-count" id="hostStatsState">host pending</div>
+              <div class="row-actions">
+                <button id="indexAllBtn" type="button">Start index</button>
+                <button id="recategorizeBtn" type="button">Fix types</button>
+                <button id="pauseIndexBtn" type="button">Pause</button>
+                <button id="resumeIndexBtn" type="button">Resume</button>
+                <button class="danger-button" id="wipeIndexBtn" type="button">Wipe index</button>
+              </div>
+            </div>
+            <div class="index-dashboard">
+              <div class="telemetry-chart" id="telemetryChart">
+                <div class="index-donut" id="indexDonut"></div>
+                <div class="filetype-donut" id="filetypeDonut">
+                  <div class="index-donut-core">Types</div>
+                </div>
+                <div class="progress-hand" id="indexProgressHand">
+                  <div class="progress-bubble" id="indexPercent">0%</div>
+                </div>
+              </div>
+              <div class="filetype-legend" id="filetypeLegend"></div>
+              <div class="index-details">
+                <label class="check-row">
+                  <input type="checkbox" id="forceIndex">
+                  Reprocess unchanged
+                </label>
+                <div class="progress-track"><div id="indexProgressBar"></div></div>
+                <div class="compact-output" id="indexStatus">No index running.</div>
+                <div class="compact-output" id="indexEta">ETA unavailable.</div>
+                <div class="scheduler-controls">
+                  <label class="check-row">
+                    <input type="checkbox" id="throttleIndexToggle" checked>
+                    Give chat priority
+                  </label>
+                  <label class="number-field">
+                    Idle minutes
+                    <input id="chatIdleMinutes" type="number" min="1" max="60" value="3">
+                  </label>
+                  <button id="saveSchedulerBtn" type="button">Save</button>
+                </div>
+                <div class="compact-output" id="indexSchedulerStatus">Chat-aware throttle is ready.</div>
+              </div>
+            </div>
+            <div class="operations-secondary">
+              <div class="host-donut-panel">
+                <div class="host-donut-wrap">
+                  <svg class="host-donut-svg" viewBox="0 0 220 220" aria-label="Host resource usage gauges">
+                    <circle class="host-ring-base" cx="110" cy="110" r="96"></circle>
+                    <circle class="host-ring host-ring-cpu" id="hostCpuRing" cx="110" cy="110" r="96"></circle>
+                    <circle class="host-ring-base" cx="110" cy="110" r="82"></circle>
+                    <circle class="host-ring host-ring-gpu" id="hostGpuRing" cx="110" cy="110" r="82"></circle>
+                    <circle class="host-ring-base" cx="110" cy="110" r="66"></circle>
+                    <circle class="host-ring host-ring-vram" id="hostVramRing" cx="110" cy="110" r="66"></circle>
+                    <circle class="host-ring-base" cx="110" cy="110" r="52"></circle>
+                    <circle class="host-ring host-ring-ram" id="hostRamRing" cx="110" cy="110" r="52"></circle>
+                  </svg>
+                  <div class="host-donut-core">
+                    <div id="hostStatsPrimary">--C</div>
+                    <span>GPU Temp</span>
+                  </div>
+                </div>
+                <div class="host-ring-legend" id="hostRingLegend"></div>
+                <div class="compact-output" id="hostStatsSummary">Host telemetry is waiting for the server.</div>
+              </div>
+              <div class="host-threshold-panel">
+                <div class="host-threshold-grid">
+                  <label class="number-field">CPU %
+                    <input id="hostCpuThreshold" type="number" min="1" max="100" value="85">
+                  </label>
+                  <label class="number-field">GPU %
+                    <input id="hostGpuThreshold" type="number" min="1" max="100" value="85">
+                  </label>
+                  <label class="number-field">RAM %
+                    <input id="hostRamThreshold" type="number" min="1" max="100" value="85">
+                  </label>
+                  <label class="number-field">VRAM %
+                    <input id="hostVramThreshold" type="number" min="1" max="100" value="85">
+                  </label>
+                  <label class="number-field">Temp C
+                    <input id="hostTempThreshold" type="number" min="30" max="115" value="82">
+                  </label>
+                  <label class="number-field">Poll sec
+                    <input id="hostPollSeconds" type="number" min="5" max="300" value="10">
+                  </label>
+                </div>
+                <div class="host-schedule-row">
+                  <label class="check-row">
+                    <input type="checkbox" id="hostScheduleEnabled" checked>
+                    Live polling
+                  </label>
+                  <label class="number-field">Quiet start
+                    <input id="hostQuietStart" type="time">
+                  </label>
+                  <label class="number-field">Quiet end
+                    <input id="hostQuietEnd" type="time">
+                  </label>
+                </div>
+                <div class="row-actions">
+                  <button id="hostStatsRefreshBtn" type="button">Refresh stats</button>
+                  <button id="hostStatsSaveBtn" type="button">Save thresholds</button>
+                </div>
+              </div>
+            </div>
+            <div class="stats-grid operations-stats-grid" id="statsGrid"></div>
+          </section>
+
+          <section class="maintenance-card admin-chat-card reorderable-card" data-card-id="intelligent-admin">
+            <div class="section-head">
+              <h2>Intelligent Admin</h2>
+              <div class="file-count">ArchivistOS Admin</div>
+            </div>
+            <div class="admin-chat-shell">
+              <div class="admin-chat-log" id="adminChatLog"></div>
+              <form class="admin-chat-form" id="adminChatForm">
+                <textarea id="adminChatInput" rows="4" placeholder="Ask admin to stage maintenance, setup, update, network share, worker node, or patch actions..."></textarea>
+                <div class="admin-chat-actions">
+                  <button id="adminPlanBtn" type="submit">Plan</button>
+                  <button id="adminRunBtn" type="button">Run</button>
+                </div>
+              </form>
+              <div class="admin-quick-actions">
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="index status">Index status</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="embedding status">Embedding status</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="engine profile">Engine profile</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="project manager brief">Project brief</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="development task queue">Dev queue</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="next development task">Next task</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="host system stats">Host stats</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Show archive controls for server restart, stop, runtime status, and freeing GPU memory.">Archive controls</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Start an Easy Connect pairing with another Archivist node.">Easy connect</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Detect this host hardware and choose an installer model profile.">Installer profile</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Help me set up a chat-ignored network share safely.">Network share</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="admin health check">Health check</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="self development status">Self-dev status</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="inspect codebase for Intelligent Admin tooling">Inspect codebase</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="run admin verification checks">Verify checks</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="stage patch proposal for Intelligent Admin tool buildout">Patch proposal</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="validate latest patch proposal">Validate diff</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="apply readiness report">Apply readiness</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="snapshot latest patch proposal">Snapshot patch</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="apply latest patch proposal">Apply request</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="rollback latest patch">Rollback patch</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Plan the next safe ArchivistOS upgrade I can test while waiting for tokens, including affected files, verification steps, and rollback notes.">Upgrade test</button>
+                <button class="adminQuickBtn" type="button" data-admin-mode="run" data-admin-prompt="codex handoff">Codex handoff</button>
+                <button class="adminQuickBtn" type="button" data-admin-prompt="Plan a worker node setup for a remote archive root.">Worker node</button>
+              </div>
+              <div class="admin-suggested-tools" id="adminSuggestedTools"></div>
+              <section class="admin-dev-queue">
+                <div class="section-head">
+                  <h2>Development Queue</h2>
+                  <div class="row-actions">
+                    <div class="file-count" id="adminDevTaskState">not loaded</div>
+                    <button id="adminDevNextBtn" type="button">Next</button>
+                    <button id="adminDevSeedBtn" type="button">Seed</button>
+                    <button id="adminDevRefreshBtn" type="button">Refresh</button>
+                  </div>
+                </div>
+                <div class="admin-dev-task-form">
+                  <input id="adminDevTaskTitleInput" type="text" placeholder="New ArchivistOS development task">
+                  <select id="adminDevTaskPriorityInput">
+                    <option value="high">High</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <button id="adminDevTaskAddBtn" type="button">Add task</button>
+                </div>
+                <div class="admin-dev-task-list" id="adminDevTaskList">Development queue not loaded.</div>
+              </section>
+              <section class="admin-engine-tools">
+                <div class="section-head">
+                  <h2>Engine Tools</h2>
+                  <button id="refreshAdminToolsBtn" type="button">Refresh</button>
+                </div>
+                <div class="admin-tool-list" id="adminEngineToolList">Tool catalog not loaded.</div>
+              </section>
+              <section class="admin-control-panel">
+                <div class="section-head">
+                  <h2>Archive Controls</h2>
+                  <div class="file-count" id="adminControlState">not loaded</div>
+                </div>
+                <div class="admin-control-actions">
+                  <button id="adminRefreshControlBtn" type="button">Refresh status</button>
+                  <button id="adminFreeGpuBtn" type="button">Free GPU</button>
+                  <button id="adminRestartServerBtn" type="button">Restart server</button>
+                  <button class="danger-button" id="adminStopServerBtn" type="button">Stop server</button>
+                </div>
+                <div class="compact-output" id="adminControlStatus">Archive controls not loaded.</div>
+                <div class="admin-control-detail" id="adminControlDetail"></div>
+              </section>
+              <div class="admin-connect-grid">
+                <section class="admin-connect-panel">
+                  <div class="section-head">
+                    <h2>Easy Connect</h2>
+                    <div class="file-count" id="adminConnectState">idle</div>
+                  </div>
+                  <div class="pair-code-display" id="adminLocalPairCode">------</div>
+                  <div class="admin-connect-actions">
+                    <button id="adminGeneratePairCodeBtn" type="button">Generate code</button>
+                    <button id="adminCopyPairCodeBtn" type="button">Copy code</button>
+                    <button id="adminResetPairCodeBtn" type="button">Reset</button>
+                  </div>
+                  <div class="remote-code-row">
+                    <input id="adminRemoteCodeInput" type="text" inputmode="numeric" placeholder="Other machine code">
+                    <button id="adminVerifyPairCodeBtn" type="button">Verify</button>
+                  </div>
+                  <div class="compact-output" id="adminConnectStatus">Easy Connect is idle.</div>
+                </section>
+                <section class="admin-connect-panel">
+                  <div class="section-head">
+                    <h2>Installer Profile</h2>
+                    <button id="adminDetectHardwareBtn" type="button">Detect hardware</button>
+                  </div>
+                  <div class="compact-output" id="adminHardwareStatus">Hardware profile not detected.</div>
+                  <div class="installer-profile" id="adminInstallerProfile"></div>
+                  <button id="adminCopyInstallerPlanBtn" type="button">Copy plan</button>
+                </section>
+              </div>
+              <div class="dashboard-card-body">
+                <div class="dashboard-line">
+                  <div class="dashboard-line-title">Future flow</div>
+                  <div class="dashboard-line-body">Mutual code exchange, discovery, hardware profile, dry-run, confirmation, audited patch/action queue, then apply.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="maintenance-card face-review-card reorderable-card" data-card-id="face-review">
+            <div class="section-head">
+              <h2>Face Review</h2>
+              <div class="row-actions">
+                <div class="file-count" id="faceReviewState">not loaded</div>
+                <button id="backfillFacesBtn" type="button">Scan media</button>
+                <button id="refreshFaceReviewBtn" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="face-review-shell">
+              <section class="face-review-panel">
+                <div class="section-head">
+                  <h2>Timeline Base</h2>
+                </div>
+                <div class="face-review-metrics" id="faceReviewMetrics"></div>
+                <div class="compact-output" id="faceDetectorStatus">Detector status has not been checked.</div>
+                <div class="compact-output" id="faceReviewStatus">Face review is waiting for timeline data.</div>
+              </section>
+
+              <section class="face-review-panel">
+                <div class="section-head">
+                  <h2>People</h2>
+                </div>
+                <div class="face-person-form">
+                  <input id="facePersonNameInput" type="text" placeholder="Person name">
+                  <input id="facePersonAliasesInput" type="text" placeholder="Aliases, comma separated">
+                  <select id="facePersonSensitivityInput">
+                    <option value="normal">Normal</option>
+                    <option value="private">Private</option>
+                    <option value="restricted">Restricted</option>
+                    <option value="hidden">Hidden</option>
+                  </select>
+                  <textarea id="facePersonNotesInput" rows="3" placeholder="Notes"></textarea>
+                  <button id="createFacePersonBtn" type="button">Add person</button>
+                </div>
+                <div class="face-person-list" id="facePersonList"></div>
+              </section>
+
+              <section class="face-review-panel face-review-wide">
+                <div class="section-head">
+                  <h2>Face Observations</h2>
+                </div>
+                <div class="face-observation-form">
+                  <input id="faceObservationPathInput" type="text" placeholder="Image/video path or future crop path">
+                  <input id="faceObservationFileIdInput" type="number" min="1" placeholder="File id">
+                  <input id="faceObservationClusterInput" type="text" placeholder="Cluster id">
+                  <select id="faceObservationMediaTypeInput">
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                  </select>
+                  <input id="faceObservationFrameInput" type="number" min="0" step="0.1" placeholder="Video seconds">
+                  <button id="createFaceObservationBtn" type="button">Add observation</button>
+                  <button id="detectFaceFileBtn" type="button">Detect faces</button>
+                  <button id="detectObjectFileBtn" type="button">Detect objects</button>
+                </div>
+                <div class="compact-output">Detected faces, manual observations, and identity links share the same review list.</div>
+                <div class="face-observation-list" id="faceObservationList"></div>
+              </section>
+
+              <section class="face-review-panel">
+                <div class="section-head">
+                  <h2>Identity Link</h2>
+                </div>
+                <div class="face-link-form">
+                  <div class="compact-output" id="selectedFaceStatus">No face observation selected.</div>
+                  <select id="faceLinkPersonSelect"></select>
+                  <select id="faceLinkStatusSelect">
+                    <option value="confirmed">Confirmed</option>
+                    <option value="tentative">Tentative</option>
+                    <option value="needs_review">Needs review</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                  <input id="faceLinkConfidenceInput" type="number" min="0" max="1" step="0.05" value="1">
+                  <button id="linkFacePersonBtn" type="button">Link selected face</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="maintenance-card archive-location-card reorderable-card" data-card-id="locations">
+            <div class="section-head">
+              <h2>Archive Locations</h2>
+              <button id="refreshLocationsBtn" type="button">Refresh</button>
+            </div>
+            <div class="source-panes">
+              <section class="source-pane">
+                <div class="source-pane-head">
+                  <h3>Chat aware</h3>
+                  <span>Indexed for retrieval</span>
+                </div>
+                <div class="source-slot">
+                  <label for="awareArchiveRootInput">Archive root</label>
+                  <input id="awareArchiveRootInput" data-location-slot="archive_root" type="text" placeholder="E:\SharedBackup">
+                  <button class="browseLocationBtn" type="button" data-target-input="awareArchiveRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="archive_root" data-target-input="awareArchiveRootInput">Save</button>
+                  <div class="source-slot-meta" id="awareArchiveRootMeta"></div>
+                </div>
+                <div class="source-slot">
+                  <label for="knowledgebaseRootInput">Knowledgebase root</label>
+                  <input id="knowledgebaseRootInput" data-location-slot="knowledgebase_root" type="text" placeholder="E:\SharedBackup\_KNOWLEDGEBASE">
+                  <button class="browseLocationBtn" type="button" data-target-input="knowledgebaseRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="knowledgebase_root" data-target-input="knowledgebaseRootInput">Save</button>
+                  <div class="source-slot-meta" id="knowledgebaseRootMeta"></div>
+                </div>
+                <div class="source-slot">
+                  <label for="awareNetworkRootInput">Network root</label>
+                  <input id="awareNetworkRootInput" data-location-slot="network_root" type="text" placeholder="\\server\share\chat-aware">
+                  <button class="browseLocationBtn" type="button" data-target-input="awareNetworkRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="network_root" data-target-input="awareNetworkRootInput">Save</button>
+                  <div class="source-slot-meta" id="awareNetworkRootMeta"></div>
+                </div>
+                <div class="source-placeholder">More chat-aware source slots later.</div>
+              </section>
+              <section class="source-pane">
+                <div class="source-pane-head">
+                  <h3>Chat ignored</h3>
+                  <span>Stored but not retrieved by chat</span>
+                </div>
+                <div class="source-slot">
+                  <label for="ignoredArchiveRootInput">Archive root</label>
+                  <input id="ignoredArchiveRootInput" data-location-slot="ignored_archive_root" type="text" placeholder="E:\SharedBackup\_ARCHIVE_REVIEW">
+                  <button class="browseLocationBtn" type="button" data-target-input="ignoredArchiveRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="ignored_archive_root" data-target-input="ignoredArchiveRootInput">Save</button>
+                  <div class="source-slot-meta" id="ignoredArchiveRootMeta"></div>
+                </div>
+                <div class="source-slot">
+                  <label for="ignoredNetworkRootInput">Network root</label>
+                  <input id="ignoredNetworkRootInput" data-location-slot="ignored_network_root" type="text" placeholder="\\server\share\cold-storage">
+                  <button class="browseLocationBtn" type="button" data-target-input="ignoredNetworkRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="ignored_network_root" data-target-input="ignoredNetworkRootInput">Save</button>
+                  <div class="source-slot-meta" id="ignoredNetworkRootMeta"></div>
+                </div>
+                <div class="source-placeholder">More chat-ignored source slots later.</div>
+              </section>
+              <section class="source-pane">
+                <div class="source-pane-head">
+                  <h3>Discovery</h3>
+                  <span>USB, scanners, printers, shares</span>
+                </div>
+                <div class="source-slot">
+                  <label for="externalUsbRootInput">USB storage root</label>
+                  <input id="externalUsbRootInput" data-location-slot="external_usb_root" type="text" placeholder="F:\ArchivistColdStorage">
+                  <button class="browseLocationBtn" type="button" data-target-input="externalUsbRootInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="external_usb_root" data-target-input="externalUsbRootInput">Save</button>
+                  <div class="source-slot-meta" id="externalUsbRootMeta"></div>
+                </div>
+                <div class="source-slot">
+                  <label for="scannerInboxInput">Scanner inbox</label>
+                  <input id="scannerInboxInput" data-location-slot="scanner_inbox" type="text" placeholder="\\this-pc\ArchivistScanner">
+                  <button class="browseLocationBtn" type="button" data-target-input="scannerInboxInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="scanner_inbox" data-target-input="scannerInboxInput">Save</button>
+                  <div class="source-slot-meta" id="scannerInboxMeta"></div>
+                </div>
+                <div class="source-slot">
+                  <label for="printerNetworkInput">Printer/share</label>
+                  <input id="printerNetworkInput" data-location-slot="printer_network_root" type="text" placeholder="\\printer-or-share\inbox">
+                  <button class="browseLocationBtn" type="button" data-target-input="printerNetworkInput">Browse</button>
+                  <button class="saveLocationSlotBtn" type="button" data-location-slot="printer_network_root" data-target-input="printerNetworkInput">Save</button>
+                  <div class="source-slot-meta" id="printerNetworkMeta"></div>
+                </div>
+                <div class="source-placeholder">Detected sources and device ingest will attach here.</div>
+              </section>
+            </div>
+            <div class="compact-output" id="archiveLocationStatus">Archive location settings not loaded.</div>
+            <div class="location-browser" id="archiveLocationBrowser"></div>
+          </section>
+
+          <section class="maintenance-card model-routing-card reorderable-card" data-card-id="models">
+            <div class="section-head">
+              <h2>Model Routing</h2>
+              <button id="refreshModelsBtn" type="button">Refresh</button>
+            </div>
+            <div class="model-route-grid" id="modelRouteGrid"></div>
+            <div class="compact-output" id="modelRoutingStatus">Model routes not loaded.</div>
+          </section>
+
+          <section class="maintenance-card reorderable-card" data-card-id="files">
+            <div class="section-head">
+              <h2>File View</h2>
+              <div class="file-count" id="fileCount">0 files</div>
+            </div>
+            <div class="file-workbench">
+              <div class="file-view-main">
+                <div class="maintenance-dropzone" id="maintenanceDropzone">Drop files here to ingest</div>
+                <div class="ingest-row">
+                  <input type="file" id="fileInput" multiple>
+                  <button id="uploadBtn" type="button">Upload</button>
+                  <div class="compact-output" id="uploadResult"></div>
+                </div>
+                <div class="file-toolbar">
+                  <input id="fileSearch" type="search" placeholder="Search files">
+                  <select id="fileCategory">
+                    <option value="">All categories</option>
+                    <option value="document">Documents</option>
+                    <option value="image">Images</option>
+                    <option value="video">Videos</option>
+                    <option value="audio">Audio</option>
+                    <option value="archive">Archives</option>
+                    <option value="software">Software</option>
+                    <option value="rom">ROMs</option>
+                    <option value="code">Code</option>
+                    <option value="data">Data</option>
+                    <option value="font">Fonts</option>
+                    <option value="shortcut">Shortcuts</option>
+                    <option value="system">System</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <select id="fileFilter">
+                    <option value="">All files</option>
+                    <option value="duplicates">Duplicates</option>
+                    <option value="delete_queue">Deletion queue</option>
+                  </select>
+                  <select id="fileSort">
+                    <option value="indexed_desc">Recently indexed</option>
+                    <option value="modified_desc">Recently modified</option>
+                    <option value="name">Name</option>
+                    <option value="size_desc">Largest</option>
+                    <option value="category">Category</option>
+                  </select>
+                </div>
+                <div class="batch-tools">
+                  <input id="tagInput" list="tagOptions" placeholder="Tag selected">
+                  <datalist id="tagOptions"></datalist>
+                  <button id="applyTagBtn" type="button">Apply tag</button>
+                  <button id="removeTagBtn" type="button">Remove tag</button>
+                  <button class="danger-button" id="queueDeleteBtn" type="button">Queue delete</button>
+                  <button id="clearDeleteBtn" type="button">Clear queue</button>
+                </div>
+                <div class="file-table-wrap">
+                  <table class="file-table">
+                    <thead>
+                      <tr>
+                        <th><input type="checkbox" id="selectAllFiles"></th>
+                        <th>Name</th>
+                        <th>Category</th>
+                        <th>Size</th>
+                        <th>Tags</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="fileTableBody"></tbody>
+                  </table>
+                </div>
+                <div class="pager">
+                  <button id="prevFilesBtn" type="button">Previous</button>
+                  <span id="filePageStatus">Page 1</span>
+                  <button id="nextFilesBtn" type="button">Next</button>
+                </div>
+              </div>
+              <aside class="file-preview-panel">
+                <div class="section-head">
+                  <h2>Preview</h2>
+                  <div class="row-actions">
+                    <button id="closePreviewBtn" type="button">Close</button>
+                    <button class="danger-button" id="queuePreviewDeleteBtn" type="button">Queue delete</button>
+                  </div>
+                </div>
+                <div class="preview" id="preview"></div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="maintenance-card reorderable-card" data-card-id="dedupe">
+            <div class="section-head">
+              <h2>Deduplication</h2>
+              <div class="row-actions">
+                <div class="file-count" id="duplicateCount">0 groups</div>
+                <button id="preindexDedupeBtn" type="button">Pre-index scan</button>
+                <button id="moveQueuedDupesBtn" type="button">Move queued dupes</button>
+                <button class="danger-button" id="queueExactDupesBtn" type="button">Queue exact dupes</button>
+              </div>
+            </div>
+            <div class="compact-output" id="preindexDedupeStatus">Pre-index dedupe is idle.</div>
+            <div class="delete-dropzone" id="deleteDropzone">Drag file rows here to queue deletion review</div>
+            <div class="duplicate-list" id="duplicateList"></div>
+            <h2 class="subsection-title">Recent Index Issues</h2>
+            <div class="failure-list" id="failureList"></div>
+          </section>
+        </section>
+      </section>
+
+      <section class="app-view explorer-pane" id="explorerView">
+        <header class="maintenance-header">
+          <div>
+            <h2>File Explorer</h2>
+            <div class="memory-count" id="explorerSubtitle">Browse the archive tree</div>
+          </div>
+          <div class="row-actions">
+            <button id="explorerRootBtn" type="button">Root</button>
+            <button id="explorerUpBtn" type="button">Up</button>
+            <button id="explorerRefreshBtn" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="explorer-body">
+          <div class="explorer-pathbar">
+            <input id="explorerPathInput" type="text" placeholder="Archive path">
+            <button id="explorerGoBtn" type="button">Go</button>
+          </div>
+          <div class="compact-output" id="explorerStatus">Explorer not loaded.</div>
+          <div class="explorer-table-wrap">
+            <table class="explorer-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Modified</th>
+                  <th>State</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="explorerTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="app-view discovery-pane" id="discoveryView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Constellation</h2>
+            <div class="memory-count" id="discoverySubtitle">Data constellation</div>
+          </div>
+          <div class="row-actions">
+            <button id="discoveryRefreshBtn" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="discovery-body">
+          <section class="discovery-map-panel">
+            <div class="discovery-map-head">
+              <div>
+                <h2>Data Constellation</h2>
+                <div class="memory-count" id="discoverySummary">Waiting for constellation data.</div>
+              </div>
+            </div>
+            <div class="discovery-map" id="discoveryMap">
+              <svg class="discovery-links" id="discoveryLinks" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <div class="discovery-nodes" id="discoveryNodes"></div>
+            </div>
+          </section>
+
+          <aside class="discovery-detail-panel">
+            <div class="section-head">
+              <h2 id="discoveryDetailTitle">Node Detail</h2>
+            </div>
+            <div class="compact-output" id="discoveryDetail">Select a node.</div>
+          </aside>
+        </section>
+      </section>
+
+      <section class="app-view notes-pane" id="notesView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Notes</h2>
+            <div class="memory-count" id="notesSubtitle">Clipboard-aware note cards</div>
+          </div>
+          <div class="row-actions">
+            <button id="newNoteBtn" type="button">New card</button>
+            <button id="refreshNotesBtn" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="notes-body">
+          <div class="notes-dropzone" id="notesDropzone" tabindex="0">Paste or drop text, files, images, or videos</div>
+          <div class="notes-grid" id="notesGrid"></div>
+        </section>
+      </section>
+
+      <section class="app-view lab-tool-pane" id="forensicsView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Forensics</h2>
+            <div class="memory-count">Identity, metadata, OCR, and file evidence workbench</div>
+          </div>
+          <div class="row-actions">
+            <button type="button">Scan</button>
+            <button type="button">Compare</button>
+            <button type="button">Extract</button>
+          </div>
+        </header>
+
+        <section class="lab-tool-body">
+          <section class="lab-card lab-card-wide">
+            <div class="section-head">
+              <h2>Evidence Board</h2>
+              <div class="file-count">analysis queue</div>
+            </div>
+            <div class="forensics-board">
+              <div class="forensics-tile">
+                <strong>Images</strong>
+                <span>faces, similarity, EXIF, duplicates</span>
+              </div>
+              <div class="forensics-tile">
+                <strong>Documents</strong>
+                <span>OCR, dates, names, signatures</span>
+              </div>
+              <div class="forensics-tile">
+                <strong>Audio/Video</strong>
+                <span>transcripts, clips, speakers, scenes</span>
+              </div>
+            </div>
+          </section>
+          <section class="lab-card">
+            <div class="section-head">
+              <h2>Queue</h2>
+            </div>
+            <div class="media-dropzone">Drop evidence files here</div>
+            <div class="compact-output">No active forensic batch.</div>
+          </section>
+          <section class="lab-card">
+            <div class="section-head">
+              <h2>Findings</h2>
+            </div>
+            <div class="dashboard-line">
+              <div class="dashboard-line-title">Review lane</div>
+              <div class="dashboard-line-body">High-confidence matches can move into tags; uncertain matches stay in review.</div>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section class="app-view lab-tool-pane" id="toolsView">
+        <header class="maintenance-header">
+          <div>
+            <h2>Tools</h2>
+            <div class="memory-count">Local and remote admin workbench</div>
+          </div>
+          <div class="row-actions">
+            <button type="button">Local Check</button>
+            <button type="button">Remote Host</button>
+            <button type="button">Recovery Plan</button>
+          </div>
+        </header>
+
+        <section class="lab-tool-body">
+          <section class="lab-card lab-card-wide">
+            <div class="section-head">
+              <h2>Admin Console</h2>
+              <div class="file-count">chat aware</div>
+            </div>
+            <textarea class="admin-command-pad" rows="10" placeholder="Describe the maintenance or recovery task"></textarea>
+            <div class="admin-tool-grid">
+              <button type="button">Inventory</button>
+              <button type="button">Network Shares</button>
+              <button type="button">SSH Setup</button>
+              <button type="button">Backups</button>
+              <button type="button">Service Health</button>
+              <button type="button">Worker Node</button>
+            </div>
+          </section>
+          <section class="lab-card">
+            <div class="section-head">
+              <h2>Runbook</h2>
+            </div>
+            <div class="dashboard-line">
+              <div class="dashboard-line-title">Dead server flow</div>
+              <div class="dashboard-line-body">Identify host, verify credentials, mount storage read-only, snapshot, then stage recovery actions.</div>
+            </div>
+            <div class="dashboard-line">
+              <div class="dashboard-line-title">Network guardrail</div>
+              <div class="dashboard-line-body">Remote roots stay chat ignored until a local worker can index them safely.</div>
+            </div>
+          </section>
+          <section class="lab-card">
+            <div class="section-head">
+              <h2>Audit</h2>
+            </div>
+            <div class="compact-output">Tool actions will write to the admin action audit before they touch systems.</div>
+          </section>
+        </section>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/web/app.js?v=20260609-gemma4"></script>
+</body>
+</html>

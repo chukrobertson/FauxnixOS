@@ -1,4 +1,5 @@
 *.png
+!remote-nixos/archivist_web/**/*.png
 *.mp4
 *.iso
 *.pkg
