@@ -24,6 +24,7 @@ HOST = os.environ.get("FAUXNIX_NODE_DESKTOP_HOST", "0.0.0.0")
 ARCHIVIST_PORT = int(os.environ.get("FAUXNIX_ARCHIVIST_WEB_PORT", "8776"))
 
 LOCAL_ACTIONS = {
+    "archivist": ["chromium", "--new-window", f"http://127.0.0.1:{ARCHIVIST_PORT}/"],
     "terminal": ["alacritty"],
     "workspace": ["fauxnix-workspace"],
     "fennix": ["fennix-gui"],
@@ -33,6 +34,10 @@ LAUNCHER_PATHS = (
     "/run/current-system/sw/bin",
     "/run/wrappers/bin",
 )
+
+
+def _archivist_loopback_url() -> str:
+    return f"http://127.0.0.1:{ARCHIVIST_PORT}/"
 
 
 def _run(args: list[str], timeout: float = 2.0) -> str:
@@ -154,7 +159,10 @@ def _launch_local(action_id: str) -> dict:
         )
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "action": action_id}
+    payload = {"ok": True, "action": action_id}
+    if action_id == "archivist":
+        payload["url"] = _archivist_loopback_url()
+    return payload
 
 
 def _status(port: int) -> dict:
@@ -167,7 +175,7 @@ def _status(port: int) -> dict:
         "lanUrls": _addresses(port),
         "loopbackUrl": f"http://127.0.0.1:{port}",
         "archivist": {
-            "loopbackUrl": f"http://127.0.0.1:{ARCHIVIST_PORT}",
+            "loopbackUrl": _archivist_loopback_url(),
             "lanUrls": _addresses(ARCHIVIST_PORT),
         },
         "disk": {

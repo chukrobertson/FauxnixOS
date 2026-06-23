@@ -107,6 +107,9 @@ async function launch(action) {
     const payload = await response.json();
     result.textContent = payload.ok ? `Launched ${action}.` : payload.error;
     result.className = payload.ok ? "subtle ok" : "subtle bad";
+    if (payload.ok && payload.url) {
+      window.location.href = payload.url;
+    }
   } catch (error) {
     result.textContent = error.message;
     result.className = "subtle bad";
