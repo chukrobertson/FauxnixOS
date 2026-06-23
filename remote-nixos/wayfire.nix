@@ -27,7 +27,7 @@ let
 
   fauxnixWayfireStartup = pkgs.writeShellApplication {
     name = "fauxnix-wayfire-startup";
-    runtimeInputs = with pkgs; [ brightnessctl coreutils xset ];
+    runtimeInputs = with pkgs; [ brightnessctl coreutils curl procps xset ];
     text = ''
       LOG="''${XDG_RUNTIME_DIR:-/tmp}/fauxnix-wayfire-startup.log"
       exec >>"$LOG" 2>&1
@@ -55,10 +55,39 @@ let
       ${pkgs.brightnessctl}/bin/brightnessctl set 80% 2>/dev/null || true
 
       # Start daemons. Background jobs do not kill the script on failure.
-      ${fauxd}/bin/fauxd &
+      if ! pgrep -u "$(id -u)" -f '/etc/fauxshell/fauxd.py' >/dev/null 2>&1; then
+        ${pkgs.util-linux}/bin/setsid ${fauxd}/bin/fauxd >/tmp/fauxd-session.log 2>&1 &
+      fi
 
-      # Give fauxd a moment before the workspace connects to it.
-      sleep 1
+      # The browser desktop is the durable visible surface for the laptop.
+      for _ in $(seq 1 80); do
+        if ${pkgs.curl}/bin/curl -fsS http://127.0.0.1:8765/api/health >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.25
+      done
+
+      if ! pgrep -u "$(id -u)" -f 'chromium.*127.0.0.1:8765' >/dev/null 2>&1; then
+        chromium_profile="$HOME/.local/share/fauxnix-node-desktop/chromium-kiosk"
+        mkdir -p "$chromium_profile"
+        ${pkgs.util-linux}/bin/setsid ${pkgs.chromium}/bin/chromium \
+          --ozone-platform=wayland \
+          --enable-features=UseOzonePlatform \
+          --kiosk \
+          --no-first-run \
+          --no-default-browser-check \
+          --disable-session-crashed-bubble \
+          --password-store=basic \
+          --user-data-dir="$chromium_profile" \
+          http://127.0.0.1:8765 >/tmp/fauxnix-node-desktop-kiosk.log 2>&1 &
+      fi
+
+      if [ "''${FAUXNIX_AUTOSTART_WORKSPACE:-0}" != "1" ]; then
+        echo "fauxnix-workspace autostart disabled; set FAUXNIX_AUTOSTART_WORKSPACE=1 to restore the PyQt workspace watchdog."
+        while true; do
+          sleep 3600
+        done
+      fi
 
       # Workspace watchdog: never let a single startup crash kill the session.
       attempt=0

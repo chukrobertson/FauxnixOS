@@ -10,7 +10,7 @@ when changing system guidance.
 
 Current areas:
 
-- `desktop/` active SDDM and Wayfire workspace profile notes.
+- `desktop/` active SDDM, Wayfire, and browser desktop profile notes.
 - `nix/` module ownership, rebuild workflow, and rollback notes.
 - `fauxshell/` desktop cards, launcher surfaces, screenshots, and continuity
   views.

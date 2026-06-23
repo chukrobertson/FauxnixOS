@@ -97,6 +97,18 @@ let
       exec ${workspacePython}/bin/python3 ${workspaceLib}/lib/fauxnix_workspace/node_server.py "$@"
     '';
   };
+  fauxnixNodeDesktop = pkgs.writeShellApplication {
+    name = "fauxnix-node-desktop";
+    runtimeInputs = [
+      pkgs.python3
+      pkgs.iproute2
+      pkgs.procps
+      pkgs.systemd
+    ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../node-desktop}/server.py "$@"
+    '';
+  };
   fauxnixSddmTheme = pkgs.stdenvNoCC.mkDerivation {
     pname = "fauxnix-sddm-theme";
     version = "0.3.0";
@@ -2253,6 +2265,7 @@ in
       ollamaUpstream
       fauxnixCanvas
       fauxnixNode
+      fauxnixNodeDesktop
       fauxnixSddmTheme
       fennixPython
       fennixChatLauncher

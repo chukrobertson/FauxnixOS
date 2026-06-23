@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fauxnix Node</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Fauxnix Archivist</p>
+          <h1 id="host">Node Desktop</h1>
+          <p class="subtle" id="system">Waiting for node status...</p>
+        </div>
+        <div class="clock">
+          <span id="time">--:--</span>
+          <span id="date">checking local time</span>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel status-panel">
+          <div class="panel-head">
+            <h2>System</h2>
+            <button id="refresh" type="button">Refresh</button>
+          </div>
+          <dl class="facts">
+            <div><dt>Display</dt><dd id="display">unknown</dd></div>
+            <div><dt>Node UI</dt><dd id="node-service">unknown</dd></div>
+            <div><dt>Ollama</dt><dd id="ollama">unknown</dd></div>
+            <div><dt>Tailscale</dt><dd id="tailscale">unknown</dd></div>
+            <div><dt>Uptime</dt><dd id="uptime">unknown</dd></div>
+            <div><dt>Disk</dt><dd id="disk">unknown</dd></div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Launch</h2>
+            <span class="hint">local kiosk only</span>
+          </div>
+          <div class="actions">
+            <button data-action="archivist" type="button">Archivist</button>
+            <button data-action="terminal" type="button">Terminal</button>
+            <button data-action="fennix" type="button">Fennix</button>
+            <button data-action="workspace" type="button">Workspace</button>
+          </div>
+          <p class="subtle" id="action-result">Remote browsers can view status; launch buttons only work from the laptop kiosk.</p>
+        </article>
+
+        <article class="panel wide">
+          <div class="panel-head">
+            <h2>Network</h2>
+            <span class="hint">LAN and tailnet</span>
+          </div>
+          <div id="urls" class="url-list"></div>
+        </article>
+
+        <article class="panel wide">
+          <div class="panel-head">
+            <h2>Processes</h2>
+            <span class="hint">live snapshot</span>
+          </div>
+          <div class="processes">
+            <pre id="processes">No process data yet.</pre>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

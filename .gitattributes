@@ -3,3 +3,6 @@ remote-nixos/**/*.nix text eol=lf
 remote-nixos/**/*.sh text eol=lf
 remote-nixos/**/*.py text eol=lf
 remote-nixos/**/*.md text eol=lf
+remote-nixos/**/*.html text eol=lf
+remote-nixos/**/*.css text eol=lf
+remote-nixos/**/*.js text eol=lf
