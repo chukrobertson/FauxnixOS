@@ -58,7 +58,6 @@ class FileListWidget(Gtk.Box):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_child(col_view)
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.append(scrolled)
 
         self._empty_label = Gtk.Label(label="Select a directory to browse")
         self._empty_label.add_css_class("large-title")
@@ -128,10 +127,10 @@ class FileListWidget(Gtk.Box):
             self._empty_label.set_text("Empty directory")
             self._empty_label.set_visible(True)
 
-    def show_search_results(self, results: list[dict], query: str):
+    def show_rows(self, results: list[dict], title: str):
         self._store.remove_all()
         self._empty_label.set_visible(False)
-        self._search_label.set_text(f'Results for "{query}"')
+        self._search_label.set_text(title)
         self._search_label.set_visible(True)
 
         for r in results:
@@ -150,11 +149,15 @@ class FileListWidget(Gtk.Box):
                 size_bytes=size, modified_ts=modified,
                 is_dir=False, summary=summary,
                 preview_path=preview, thumb_path=thumb,
+                file_id=r.get("id"),
             ))
 
         if len(self._store) == 0:
-            self._empty_label.set_text("No results found")
+            self._empty_label.set_text("No files found")
             self._empty_label.set_visible(True)
+
+    def show_search_results(self, results: list[dict], query: str):
+        self.show_rows(results, f'Results for "{query}"')
 
 
 class FileItem(GObject.Object):
@@ -216,8 +219,8 @@ class FileItem(GObject.Object):
         stat = path.stat()
         is_dir = path.is_dir()
         ext = path.suffix.lower() if not is_dir else ""
-        from ..services.archivist_bridge import file_category as fc
-        cat = "folder" if is_dir else fc(path)
+        from ..services.archivist_bridge import file_category
+        cat = "folder" if is_dir else file_category(path)
         return cls(
             name=path.name, path=str(path), ext=ext, category=cat,
             size_bytes=0 if is_dir else stat.st_size,

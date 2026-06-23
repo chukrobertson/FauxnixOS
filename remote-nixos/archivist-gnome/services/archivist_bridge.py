@@ -154,8 +154,53 @@ class ArchivistBridge:
         if not self._ready:
             return []
         try:
-            rows = self._maint().list_files(limit=limit, offset=offset, category=category)
-            return [dict(r) for r in rows]
+            result = self._maint().list_files(limit=limit, offset=offset, category=category)
+            if isinstance(result, dict):
+                return [dict(r) for r in result.get("files", [])]
+            return [dict(r) for r in result]
+        except Exception:
+            return []
+
+    def recent_files(self, limit: int = 80) -> list[dict]:
+        return self.list_files(limit=limit, offset=0)
+
+    def duplicate_files(self, limit: int = 50) -> list[dict]:
+        if not self._ready:
+            return []
+        try:
+            result = self._maint().duplicate_groups(limit=limit)
+            rows = []
+            for group in result.get("groups", []):
+                for item in group.get("files", []):
+                    row = dict(item)
+                    row["summary"] = (
+                        row.get("summary")
+                        or f"Duplicate group: {group.get('count', 0)} files, "
+                        f"{self.format_size(group.get('reclaimable_bytes', 0))} reclaimable"
+                    )
+                    rows.append(row)
+            return rows
+        except Exception:
+            return []
+
+    def index_failures(self, limit: int = 80) -> list[dict]:
+        if not self._ready:
+            return []
+        try:
+            result = self._maint().index_failure_triage(limit=limit)
+            rows = []
+            for item in result.get("groups", []):
+                failures = item.get("failures") or []
+                sample = failures[0].get("error") if failures else item.get("error", "")
+                path = item.get("path", "")
+                rows.append({
+                    "path": path,
+                    "name": Path(path).name,
+                    "category": "index failure",
+                    "summary": sample or "Indexing failed for this path.",
+                    "modified_ts": item.get("last_ts") or 0,
+                })
+            return rows
         except Exception:
             return []
 
@@ -263,6 +308,33 @@ class ArchivistBridge:
         except Exception:
             return {"files": 0, "tags": 0}
 
+    @staticmethod
+    def format_size(size_bytes: int | float | None) -> str:
+        value = float(size_bytes or 0)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1024 or unit == "TB":
+                if unit == "B":
+                    return f"{int(value)} {unit}"
+                return f"{value:.1f} {unit}"
+            value /= 1024
+
     def close(self):
         self._ready = False
         self._a = None
+
+
+def file_category(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic"}:
+        return "image"
+    if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+        return "video"
+    if ext in {".mp3", ".wav", ".m4a", ".flac", ".ogg"}:
+        return "audio"
+    if ext in {".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".xlsx", ".pptx"}:
+        return "document"
+    if ext in {".py", ".js", ".ts", ".rs", ".go", ".c", ".cpp", ".h", ".nix", ".sh", ".css", ".html"}:
+        return "code"
+    if ext in {".zip", ".tar", ".gz", ".7z", ".rar"}:
+        return "archive"
+    return "other"

@@ -17,6 +17,7 @@ from .widgets.directory_tree import DirectoryTreeWidget
 from .widgets.file_list import FileListWidget
 from .widgets.preview_pane import PreviewPane
 from .widgets.search_bar import SearchBar
+from .widgets.overview_panel import OverviewPanel
 from .services.archivist_bridge import ArchivistBridge
 
 
@@ -57,6 +58,10 @@ class ArchivistWindow(Adw.ApplicationWindow):
         self.set_titlebar(header)
 
     def _build_main(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._overview = OverviewPanel()
+        outer.append(self._overview)
+
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         paned.set_position(240)
         paned.set_wide_handle(True)
@@ -93,7 +98,8 @@ class ArchivistWindow(Adw.ApplicationWindow):
         content_paned.set_end_child(scrolled_preview)
 
         paned.set_end_child(content_paned)
-        self.set_content(paned)
+        outer.append(paned)
+        self.set_content(outer)
 
     def _sidebar_stack(self):
         stack = Adw.ViewStack()
@@ -118,6 +124,11 @@ class ArchivistWindow(Adw.ApplicationWindow):
         self._preview.connect("apply_tag", self._on_apply_tag)
         self._preview.connect("remove_tag", self._on_remove_tag)
         self._index_btn.connect("clicked", self._on_index)
+        self._overview.connect("refresh_requested", lambda *_: self._refresh_stats())
+        self._overview.connect("index_requested", self._on_index)
+        self._overview.connect("show_recent_requested", self._on_show_recent)
+        self._overview.connect("show_duplicates_requested", self._on_show_duplicates)
+        self._overview.connect("show_failures_requested", self._on_show_failures)
 
     def _init_bridge(self):
         if not self._bridge.initialize():
@@ -167,11 +178,30 @@ class ArchivistWindow(Adw.ApplicationWindow):
 
     def _run_index(self):
         from .widgets.index_progress import IndexProgressDialog
-        dialog = IndexProgressDialog(self, self._bridge, WATCHED_ROOTS)
-        dialog.run()
+        IndexProgressDialog(self, self._bridge, WATCHED_ROOTS)
+
+    def _on_show_recent(self, *_args):
+        self._file_list.show_rows(
+            self._bridge.recent_files(limit=100),
+            "Recent indexed files",
+        )
+
+    def _on_show_duplicates(self, *_args):
+        self._file_list.show_rows(
+            self._bridge.duplicate_files(limit=50),
+            "Duplicate candidates",
+        )
+
+    def _on_show_failures(self, *_args):
+        self._file_list.show_rows(
+            self._bridge.index_failures(limit=100),
+            "Index failures",
+        )
 
     def _refresh_stats(self):
         stats = self._bridge.stats()
+        self._overview.update_stats(stats)
         self._stats_label.set_label(
-            f"{stats.get('files', 0)} files  ·  {stats.get('tags', 0)} tags"
+            f"{stats.get('active_file_count', stats.get('file_count', 0))} files  "
+            f"-  {stats.get('index_failure_count', 0)} failures"
         )
