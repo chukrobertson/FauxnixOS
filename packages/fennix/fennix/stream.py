@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 SOCKET_DIR = "/run/nexus"
+DISPATCH_SOCK = "/run/nexus/dispatch.sock"
 
 
 def stream_event(thread_name: str, source: str, data: dict, duration: float | None = None) -> None:
@@ -50,12 +51,10 @@ def stream_idle_event(thread_name: str, state: str, seconds: float) -> None:
 
 
 def _write_to_socket(thread_name: str, event: dict) -> None:
-    os.makedirs(SOCKET_DIR, exist_ok=True)
-    sock_path = Path(SOCKET_DIR) / f"{thread_name}.sock"
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2)
-        sock.connect(str(sock_path))
+        sock.connect(DISPATCH_SOCK)
         sock.sendall((json.dumps(event) + "\n").encode())
         sock.close()
     except (FileNotFoundError, ConnectionRefusedError, OSError):
