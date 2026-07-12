@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FauxnixOS — labwc compositor config for macOS profile -->
+<labwc_config>
+  <core>
+    <gap>0</gap>
+  </core>
+
+  <theme>
+    <name>macos</name>
+    <cornerRadius>10</cornerRadius>
+    <borderWidth>0</borderWidth>
+    <titlebarHeight>28</titlebarHeight>
+    <windowActiveBorderColor>#007aff</windowActiveBorderColor>
+    <windowInactiveBorderColor>#d1d1d6</windowInactiveBorderColor>
+  </theme>
+
+  <keyboard>
+    <defaultLayout>us</defaultLayout>
+    <repeatRate>25</repeatRate>
+    <repeatDelay>600</repeatDelay>
+  </keyboard>
+
+  <mouse>
+    <emulate3Button>no</emulate3Button>
+    <focus>click</focus>
+    <focusFollowsMouse>no</focusFollowsMouse>
+  </mouse>
+
+  <snapping>
+    <range>4</range>
+    <topMaximize>yes</topMaximize>
+  </snapping>
+
+  <resize>
+    <forceHitTest>yes</forceHitTest>
+    <range>4</range>
+  </resize>
+
+  <!-- Top panel + bottom dock (Fennix handles both, labwc reserves space) -->
+  <regions>
+    <region name="panel">
+      <x>0</x>
+      <y>0</y>
+      <width>100%</width>
+      <height>28</height>
+      <layer>overlay</layer>
+    </region>
+  </regions>
+
+  <windowSwitcher show="yes" preview="yes" outlines="yes" />
+</labwc_config>

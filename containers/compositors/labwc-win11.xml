@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FauxnixOS — labwc compositor config for Windows 11 profile -->
+<labwc_config>
+  <core>
+    <gap>0</gap>
+  </core>
+
+  <theme>
+    <name>win11</name>
+    <cornerRadius>8</cornerRadius>
+    <borderWidth>1</borderWidth>
+    <titlebarHeight>32</titlebarHeight>
+    <windowActiveBorderColor>#60cdff</windowActiveBorderColor>
+    <windowInactiveBorderColor>#3a3a3a</windowInactiveBorderColor>
+  </theme>
+
+  <keyboard>
+    <defaultLayout>us</defaultLayout>
+    <repeatRate>25</repeatRate>
+    <repeatDelay>600</repeatDelay>
+  </keyboard>
+
+  <mouse>
+    <emulate3Button>no</emulate3Button>
+    <focus>click</focus>
+    <focusFollowsMouse>no</focusFollowsMouse>
+  </mouse>
+
+  <snapping>
+    <range>4</range>
+    <topMaximize>yes</topMaximize>
+  </snapping>
+
+  <resize>
+    <forceHitTest>yes</forceHitTest>
+    <range>4</range>
+  </resize>
+
+  <!-- Bottom panel (Fennix handles the actual panel, labwc reserves space) -->
+  <regions>
+    <region name="panel">
+      <x>0</x>
+      <y>0</y>
+      <width>100%</width>
+      <height>0</height>
+      <layer>overlay</layer>
+    </region>
+  </regions>
+
+  <windowSwitcher show="yes" preview="yes" outlines="yes" />
+</labwc_config>

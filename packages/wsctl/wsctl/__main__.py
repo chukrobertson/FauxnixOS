@@ -222,27 +222,56 @@ def _cmd_ask(args: argparse.Namespace) -> None:
     query = " ".join(args.query)
     template = match_template(query)
     desc = template_description(template)
+    profile = args.profile or "headless"
     thread_name = args.name or template + "-" + _short_id()
 
     if args.dry_run:
         print(f"Query: {query}")
         print(f"Matched: {template} — {desc}")
+        print(f"Profile: {profile}")
+        _print_profile_info(profile)
         print(f"Would create: {thread_name}")
         return
 
     try:
-        manifest = create_workspace(thread_name, profile="headless", template=template)
+        manifest = create_workspace(thread_name, profile=profile, template=template)
         print(f"Created thread '{thread_name}' (id={manifest['workspace']['id']})")
         print(f"Template: {template} — {desc}")
+        print(f"Desktop feel: {profile}")
+        _print_profile_info(profile)
         print(f"Start with: wsctl start {thread_name}")
     except FileExistsError:
         print(f"Error: Thread '{thread_name}' already exists", file=sys.stderr)
         sys.exit(1)
 
 
+def _print_profile_info(profile: str) -> None:
+    info = {
+        "win11": "  Bottom taskbar, centered launcher, acrylic blur, snap layouts",
+        "macos": "  Top menu bar, bottom dock, spotlight search, frosted glass",
+        "headless": "  SSH access only, no desktop environment",
+    }
+    print(info.get(profile, ""))
+
+
 def _short_id() -> str:
     import uuid
     return uuid.uuid4().hex[:6]
+
+
+def _cmd_profiles(args: argparse.Namespace) -> None:
+    print("Desktop Feel Profiles:\n")
+    profiles = [
+        ("win11", "Windows 11", "Bottom taskbar, centered launcher, acrylic blur, snap layouts"),
+        ("macos", "macOS", "Top menu bar, bottom dock, frosted glass, spotlight search"),
+        ("headless", "Headless", "SSH access only, no desktop environment"),
+    ]
+    for pid, name, desc in profiles:
+        print(f"  {pid:<10} {name:<12} {desc}")
+    print()
+    print("Usage:")
+    print("  wsctl create <name> --profile win11")
+    print("  wsctl ask 'coding work' --profile macos")
 
 
 def main() -> None:
@@ -321,8 +350,13 @@ def main() -> None:
     p_ask = sub.add_parser("ask", help="Create a thread from a natural language description")
     p_ask.add_argument("query", nargs="+", help="What kind of thread do you need?")
     p_ask.add_argument("--name", "-n", help="Thread name (auto-generated if not set)")
+    p_ask.add_argument("--profile", "-p", choices=["win11", "macos", "headless"], default="headless",
+                       help="Desktop feel (win11, macos, or headless)")
     p_ask.add_argument("--dry-run", action="store_true", help="Show what would be created")
     p_ask.set_defaults(func=_cmd_ask)
+
+    p_profiles = sub.add_parser("profiles", help="List available desktop feel profiles")
+    p_profiles.set_defaults(func=_cmd_profiles)
 
     args = parser.parse_args()
     args.func(args)
