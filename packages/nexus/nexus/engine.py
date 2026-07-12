@@ -268,3 +268,45 @@ def _notify(title: str, body: str) -> None:
         )
     except Exception:
         pass
+
+
+class ThreadHealthMonitor(BaseService):
+    name = "health_monitor"
+    interval_s = 30
+
+    def tick(self) -> None:
+        import subprocess
+        from nexus.db import update_health, get_health, recent_events, thread_names
+
+        try:
+            result = subprocess.run(
+                ["sudo", "machinectl", "list", "--no-legend"],
+                capture_output=True, text=True,
+            )
+            active = set()
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    active.add(line.split()[0])
+        except Exception:
+            active = set()
+
+        known = set(thread_names())
+        all_names = active | known
+
+        for name in all_names:
+            status = "running" if name in active else "stopped"
+            cpu = None
+            mem = None
+
+            events = recent_events(name, 5)
+            for e in reversed(events):
+                if e["source"] == "system":
+                    try:
+                        import json
+                        data = json.loads(e["event_data"])
+                        cpu = data.get("cpu")
+                        mem = data.get("mem")
+                    except Exception:
+                        pass
+
+            update_health(name, status, cpu, mem)

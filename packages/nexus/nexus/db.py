@@ -63,6 +63,20 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_thread_context_source ON thread_context(source);
         CREATE INDEX IF NOT EXISTS idx_thread_vectors_name ON thread_vectors(thread_name);
         CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status);
+
+        CREATE TABLE IF NOT EXISTS thread_health (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_name TEXT NOT NULL,
+            status TEXT DEFAULT 'unknown',
+            last_seen TEXT,
+            started_at TEXT,
+            crash_count INTEGER DEFAULT 0,
+            total_uptime_minutes INTEGER DEFAULT 0,
+            last_cpu REAL,
+            last_mem REAL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_thread_health_name ON thread_health(thread_name);
     """)
     conn.commit()
     conn.close()
@@ -123,3 +137,64 @@ def count_events(thread_name: str) -> int:
     ).fetchone()
     conn.close()
     return row["cnt"] if row else 0
+
+
+def get_health(thread_name: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM thread_health WHERE thread_name = ? ORDER BY id DESC LIMIT 1",
+        (thread_name,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_health(thread_name: str, status: str, cpu: float | None = None, mem: float | None = None) -> None:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn = get_conn()
+    existing = conn.execute(
+        "SELECT * FROM thread_health WHERE thread_name = ? ORDER BY id DESC LIMIT 1",
+        (thread_name,),
+    ).fetchone()
+
+    if existing:
+        crash_count = existing["crash_count"]
+        started_at = existing["started_at"]
+        if existing["status"] != "running" and status == "running":
+            if started_at:
+                crash_count += 1
+            started_at = now
+        elif status != "running":
+            started_at = None
+
+        conn.execute(
+            """UPDATE thread_health SET status=?, last_seen=?, started_at=?,
+               crash_count=?, last_cpu=?, last_mem=? WHERE id=?""",
+            (status, now, started_at, crash_count,
+             cpu or existing["last_cpu"], mem or existing["last_mem"],
+             existing["id"]),
+        )
+    else:
+        started_at = now if status == "running" else None
+        conn.execute(
+            """INSERT INTO thread_health
+               (thread_name, status, last_seen, started_at, last_cpu, last_mem)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (thread_name, status, now, started_at, cpu, mem),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def all_health() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT h.*, 
+           (SELECT count(*) FROM thread_context c WHERE c.thread_name = h.thread_name) as event_count
+           FROM thread_health h ORDER BY h.thread_name"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

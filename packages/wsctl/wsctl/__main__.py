@@ -281,6 +281,86 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
     run_dashboard(refresh=args.refresh)
 
 
+def _cmd_status(args: argparse.Namespace) -> None:
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.operations import list_workspaces
+    from wsctl.manifest import load_manifest
+    from wsctl.git import log as git_log
+    import subprocess
+
+    ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
+    if not ws_path.exists():
+        print(f"Error: Thread '{args.name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    manifest = load_manifest(ws_path)
+    threads = {t["name"]: t for t in list_workspaces()}
+    info = threads.get(args.name, {})
+    status = info.get("status", "unknown")
+    profile = info.get("profile", "unknown")
+    topics = info.get("topics", [])
+    parent = info.get("parent")
+
+    status_icon = "\033[1;32m● running\033[0m" if status == "running" else "\033[1;30m○ stopped\033[0m"
+
+    print(f"\033[1;37m{args.name}\033[0m  {status_icon}")
+    print(f"  Profile:  {profile}")
+    print(f"  Template: {manifest['nix'].get('template', 'none') if manifest else 'none'}")
+    print(f"  Topics:   {', '.join(topics) if topics else '-'}")
+    print(f"  Parent:   {parent or '(root)'}")
+    if manifest:
+        print(f"  Created:  {manifest['workspace']['created'][:19]}")
+        snapshots = manifest.get("snapshots", {}).get("history", [])
+        print(f"  Snapshots: {len(snapshots)} ({', '.join(snapshots[-3:]) if snapshots else 'none'})")
+
+    print()
+
+    try:
+        import sys
+        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        from nexus.db import get_health, count_events, recent_events
+        health = get_health(args.name)
+        events = count_events(args.name)
+        if health:
+            print("\033[1;33m  Health\033[0m")
+            print(f"  Events:    {events}")
+            print(f"  Status:    {health.get('status', 'unknown')}")
+            print(f"  Crashes:   {health.get('crash_count', 0)}")
+            if health.get("last_cpu"):
+                print(f"  CPU:       {health['last_cpu']:.1f}%")
+            if health.get("last_mem"):
+                print(f"  Memory:    {health['last_mem']:.1f}%")
+            if health.get("started_at"):
+                print(f"  Started:   {health['started_at'][:19]}")
+            if health.get("last_seen"):
+                print(f"  Last seen: {health['last_seen'][:19]}")
+            print()
+
+        recent = recent_events(args.name, 5)
+        if recent:
+            print("\033[1;33m  Recent Events\033[0m")
+            for e in recent:
+                src = e["source"]
+                data = e["event_data"][:80]
+                print(f"  [{src:10}] {data}")
+            print()
+    except Exception:
+        pass
+
+    commits = git_log(ws_path, n=5)
+    if commits:
+        print("\033[1;33m  Git History\033[0m")
+        for c in commits:
+            print(f"  {c['hash']}  {c['date'][:19]}  {c['message'][:60]}")
+        print()
+
+    if status == "running":
+        print(f"  \033[90mwsctl attach {args.name}  — connect to this thread\033[0m")
+    else:
+        print(f"  \033[90mwsctl start {args.name}  — boot this thread\033[0m")
+
+
 def _cmd_clip_copy(args: argparse.Namespace) -> None:
     import subprocess
     import socket
@@ -460,6 +540,10 @@ def main() -> None:
     p_dash = sub.add_parser("dashboard", help="Live TUI dashboard for thread management")
     p_dash.add_argument("--refresh", "-r", type=int, default=5, help="Refresh interval in seconds")
     p_dash.set_defaults(func=_cmd_dashboard)
+
+    p_status = sub.add_parser("status", help="Show detailed status for a thread")
+    p_status.add_argument("name", help="Thread name")
+    p_status.set_defaults(func=_cmd_status)
 
     p_clip = sub.add_parser("clip", help="Shared clipboard between threads")
     clip_sub = p_clip.add_subparsers(dest="clip_command")
