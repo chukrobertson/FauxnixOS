@@ -43,7 +43,7 @@ def vision_status() -> dict:
         "ready": bool(selected in installed) if installed else False,
         "model": selected,
         "installed": installed,
-        "hint": "Install a vision model via Ollama (e.g. qwen3-vl:8b, minicpm-v4.6:latest)",
+        "hint": "Install a vision model via Ollama (e.g. moondream:1.8b, minicpm-v:latest)",
     }
 
 

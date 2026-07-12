@@ -15,7 +15,6 @@ def nspawn_boot(workspace_path: Path, shared_path: Path, machine_name: str = "wo
             f"--bind={shared_path}:/shared",
             "--bind=/run/nexus",
             "--bind=/home/chxk/Projects/fauxnix-core:/fauxnix-core",
-            "--private-network",
             "--boot",
         ],
         stdout=subprocess.DEVNULL,

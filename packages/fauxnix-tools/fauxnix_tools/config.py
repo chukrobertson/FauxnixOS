@@ -41,8 +41,8 @@ class FauxnixConfig:
         self.ollama_chat_model = os.getenv("FAUXNIX_CHAT_MODEL", "qwen2.5:7b")
         self.ollama_embed_model = os.getenv("FAUXNIX_EMBED_MODEL", "nomic-embed-text:latest")
         self.ollama_reason_model = os.getenv("FAUXNIX_REASON_MODEL", "qwen2.5:7b")
-        self.ollama_vision_model = os.getenv("FAUXNIX_VISION_MODEL", "qwen3-vl:8b")
-        self.ollama_vision_fallback = os.getenv("FAUXNIX_VISION_FALLBACK", "minicpm-v4.6:latest")
+        self.ollama_vision_model = os.getenv("FAUXNIX_VISION_MODEL", "moondream:1.8b")
+        self.ollama_vision_fallback = os.getenv("FAUXNIX_VISION_FALLBACK", "minicpm-v:latest")
         self.ollama_summary_model = os.getenv("FAUXNIX_SUMMARY_MODEL", "qwen2.5:1.5b")
 
         self.tesseract_cmd = os.getenv("FAUXNIX_TESSERACT_CMD", "tesseract")
