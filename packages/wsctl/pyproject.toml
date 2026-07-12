@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wsctl"
+version = "0.1.0"
+description = "FauxnixOS Workspace Controller — manage container-based workspaces with btrfs snapshots"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+wsctl = "wsctl.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["wsctl*"]

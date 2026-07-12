@@ -1,16 +1,19 @@
-# FauxnixOS Workspace System
+# FauxnixOS Thread System
 
-Container-based workspace management with AI-driven context awareness, fork/merge operations, and dual desktop feels.
+Container-based threads of continuity with AI-driven context awareness, fork/join operations, and dual desktop feels.
 
 ## Concept
+
+Threads are isolated NixOS containers (systemd-nspawn + btrfs) that can be forked, merged, snapshotted, and restored. Two AI assistants operate at different layers:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                  Immutable NixOS Base                     │
 │  ┌────────────┐  ┌──────────┐  ┌──────────────────────┐ │
-│  │  Fennix    │  │ Snapper  │  │ Container Runtime    │ │
-│  │ (assistant)│  │ (btrfs)  │  │ (systemd-nspawn)     │ │
-│  │            │  │          │  │ or Podman            │ │
+│  │   NEXUS    │  │ Snapper  │  │ Container Runtime    │ │
+│  │ (host      │  │ (btrfs)  │  │ (systemd-nspawn)     │ │
+│  │  daemon)   │  │          │  │                      │ │
+│  │            │  │          │  │                      │ │
 │  │ Ollama     │  │          │  │                      │ │
 │  └─────┬──────┘  └────┬─────┘  └──────────┬───────────┘ │
 │        │              │                   │              │
@@ -18,75 +21,135 @@ Container-based workspace management with AI-driven context awareness, fork/merg
 └────────┼──────────────┼───────────────────┼──────────────┘
          │              │                   │
   ┌──────▼──────┐ ┌─────▼─────┐      ┌──────▼──────┐
-  │ Workspace A │ │ Workspace B│      │ Workspace C │
-  │ (nspawn)    │ │ (nspawn)   │      │ (nspawn)    │
+  │  Thread A    │ │ Thread B  │      │ Thread C    │
+  │  (nspawn)    │ │ (nspawn)  │      │ (nspawn)    │
   │             │ │            │      │             │
   │ win11 feel  │ │ macos feel │      │ headless    │
   │ btrfs subvol│ │ btrfs subvol│     │ dev shell   │
-  │ git repo    │ │ git repo   │      │             │
   │ Nix closure │ │ Nix closure│      │             │
-  │ Fennix agent│ │ Fennix agent│     │             │
-  └──────┬──────┘ └─────┬──────┘      └─────────────┘
-         │              │
-  ┌──────▼──────────────▼──────┐
-  │    Shared Files            │
-  │    /@shared (btrfs)        │
-  │    bind-mounted to all ws  │
-  └────────────────────────────┘
+  │             │ │            │      │             │
+  │ ┌─────────┐ │ │ ┌────────┐ │      │ ┌─────────┐ │
+  │ │ FENNIX   │ │ │ │FENNIX  │ │      │ │ FENNIX   │ │
+  │ │(in-thread│ │ │ │        │ │      │ │          │ │
+  │ │assistant)│ │ │ │        │ │      │ │          │ │
+  │ └────┬────┘ │ │ └───┬────┘ │      │ └────┬────┘ │
+  │      │      │ │     │      │      │      │      │
+  └──────┼──────┘ └─────┼──────┘      └──────┼──────┘
+         │              │                     │
+    context stream  context stream      context stream
+         │              │                     │
+  ┌──────▼──────────────▼─────────────────────▼──────┐
+  │          ML Pipeline (Nexus-hosted)              │
+  │  embeddings → clustering → drift → suggestions   │
+  └──────────────────────────────────────────────────┘
 ```
 
-## Core Operations
+## Thread Lifecycle
 
-### Fork
-"Start a new workspace from this content"
-- Snapshot current workspace (safety)
-- Create writable btrfs snapshot as new workspace
-- Present file/app picker for what to carry over
-- New workspace inherits parent's Nix closure
-- Parent workspace unchanged
+### Spin (Fork)
+"Start a new thread from this content"
+- Snapshot current thread (safety)
+- Create writable btrfs snapshot as new thread
+- New thread inherits parent's Nix closure
+- Parent thread unchanged
+- Nexus detects topic drift → suggests spin
 
-### Merge
-"Merge this workspace into workspace X"
-- Snapshot both workspaces (always — undo is free)
+### Join (Merge)
+"Merge this thread into thread X"
+- Snapshot both threads (always — undo is free)
 - Union their Nix closures (packages + services)
 - Copy relevant files to shared directory
-- Show diff summary
-- Archive source workspace (soft-delete, snapshots preserved)
+- Archive source thread (soft-delete, snapshots preserved)
+- Nexus detects 87% topic overlap → suggests join
 
 ### Suggest
-Fennix assistant detects drift/overlap and recommends:
-- "You drifted from topic A into topic B — fork?"
-- "Workspace X and Y are 87% similar — merge?"
-- "You need a workspace for [detected task] — create?"
+Nexus detects patterns and recommends:
+- "You drifted from topic A into topic B — spin?"
+- "Thread X and Y are 87% similar — join?"
+- "You need a thread for [detected task] — create?"
+
+## Nexus vs Fennix
+
+| | Nexus (Host) | Fennix (In-Thread) |
+|---|---|---|
+| **Scope** | All threads | Single thread |
+| **Runs** | Immutable base system | Inside each thread container |
+| **Manages** | Thread lifecycle, ML pipeline, security | User activity monitoring, context collection |
+| **Data** | Aggregates from all Fennix instances | Streams context to Nexus |
+| **UI** | systemd service (headless) | Qt6 desktop shell (tray, quickbar, panels) |
+| **LLM** | Coordinates Ollama (single server) | Uses Ollama via Nexus proxy |
+| **Security** | Intrusion detection, audit (future) | Threat reports to Nexus (future) |
 
 ## Desktop Feel Profiles
 
-Each workspace can adopt one of two desktop feels. These are compostor + theme templates, not separate codebases.
+Each thread can adopt one of two desktop feels:
 
 ### Windows 11 Profile
 - Bottom taskbar with centered launcher
 - System tray right-aligned
 - Rounded window corners, acrylic/blur effects
-- Snap layout for window tiling
-- Implementation: Labwc compositor + Fennix Qt6 panel (win11 layout)
+- Implementation: labwc compositor + Fennix Qt6 panel (win11 layout + QSS theme)
 
 ### macOS Profile
 - Top menu bar (global)
 - Bottom dock with magnifying icons
 - Spotlight-style quick launcher
-- Mission Control-like workspace overview
-- Implementation: Labwc compositor + Fennix Qt6 panel (macos layout)
+- Implementation: labwc compositor + Fennix Qt6 panel (macos layout + QSS theme)
 
-Fennix's existing Qt6 UI layer (`fennix.ui.quickbar`, `fennix.ui.tray`, `fennix.ui.window`) provides the panel/dock/launcher for both profiles. The compositor underneath is the same (labwc/wayfire) — only the panel layout and QSS theme differ.
+## ML Pipeline
 
-## Relationship to Existing FauxnixOS Components
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Thread A    │     │ Thread B    │     │ Thread C    │
+│ Fennix      │     │ Fennix      │     │ Fennix      │
+│ activity ───┼─────┼──activity ──┼─────┼──activity ──┤
+│   .jsonl    │     │   .jsonl    │     │   .jsonl    │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │    Nexus    │
+                    │  Aggregator │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │  Textify    │
+                    │  Embed      │
+                    │  Cluster    │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │  Drift      │
+                    │  Detection  │
+                    │  Overlap    │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │  Suggestion │
+                    │  Engine     │
+                    │  (spin/join)│
+                    └─────────────┘
+```
 
-| Component | Role in Workspace System |
-|-----------|-------------------------|
+## Data Flow (Fennix → Nexus)
+
+1. Fennix (in-thread) collects: window titles, file changes, browser domains, terminal history, git activity, idle state
+2. Writes to `activity.jsonl` + streams via unix socket
+3. Nexus aggregator reads all thread sockets
+4. Textifies → embeds → clusters → detects drift/overlap
+5. Suggestions queued → delivered via libnotify or Fennix tray
+
+## Relationship to Existing Components
+
+| Component | Role in Thread System |
+|-----------|----------------------|
 | `fauxnix-tools` | Shared DB, LLM routing, file indexing |
-| `fennix` | Assistant daemon, context collection, UI (tray/quickbar/window) |
-| `membrie` | Session tracking per workspace (drift detection source) |
-| `archivist` | File organization across shared files |
+| `fennix` | In-thread assistant: context collection, desktop shell, Qt6 UI |
+| `nexus` (planned) | Host daemon: thread orchestration, ML pipeline, security |
+| `membrie` | Session tracking — being absorbed into fennix |
+| `archivist` | File management — being absorbed into fennix |
+| `wsctl` | Thread management CLI |
 
 ## Phases
 
@@ -94,16 +157,18 @@ Fennix's existing Qt6 UI layer (`fennix.ui.quickbar`, `fennix.ui.tray`, `fennix.
 |---|-------|-------------|
 | 1 | [Immutable Base + btrfs + nspawn](./01-base-system.md) | None |
 | 2 | [Fork/Merge CLI (wsctl)](./02-fork-merge-cli.md) | Phase 1 |
-| 3 | [Per-Workspace Context Agent](./03-context-agent.md) | Phase 1 |
-| 4 | [Embedding Pipeline + Clustering](./04-embeddings-clustering.md) | Phase 3 |
-| 5 | [Assistant Daemon + Suggestion Engine](./05-assistant-daemon.md) | Phase 4 |
-| 6 | [UI Layer + Desktop Feels + Polish](./06-ui-polish.md) | Phase 5 |
+| 3 | [Per-Thread Context Agent (Fennix)](./03-context-agent.md) | Phase 1 |
+| 4 | [Embedding Pipeline + Clustering (Nexus ML)](./04-embeddings-clustering.md) | Phase 3 |
+| 5 | [Assistant Daemon + Suggestion Engine (Nexus)](./05-assistant-daemon.md) | Phase 4 |
+| 6 | [UI Layer + Desktop Feels + Polish (Fennix Shell)](./06-ui-polish.md) | Phase 5 |
 
 ## Glossary
 
-- **Workspace**: An isolated container (systemd-nspawn) with its own Nix closure, btrfs subvolume, and git repo
-- **Base System**: The immutable NixOS host — read-only, boots clean every time, runs Fennix + Ollama + container runtime
-- **Fork**: Create a new workspace from a snapshot of an existing one
-- **Merge**: Combine two workspaces' closures and files into one, archiving the source
-- **Drift**: When workspace activity diverges from its known topic vector
-- **Feel Profile**: The desktop layout/theme applied to a workspace (win11 or macos)
+- **Thread**: A containerized workspace. Short for "thread of continuity."
+- **Nexus**: Host-level daemon — manages threads, ML pipeline, security.
+- **Fennix**: In-thread assistant — monitors activity, assists the user.
+- **Base System**: The immutable NixOS host — read-only, boots clean every time.
+- **Spin**: Fork a new thread from an existing one.
+- **Join**: Merge two threads into one.
+- **Drift**: When thread activity diverges from its known topic vector.
+- **Feel Profile**: The desktop layout/theme applied to a thread (win11 or macos).
