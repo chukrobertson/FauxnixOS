@@ -82,6 +82,47 @@ def _cmd_snapshot(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _cmd_snapshots_prune(args: argparse.Namespace) -> None:
+    import subprocess
+    from pathlib import Path
+    from wsctl import WSCI_SNAPSHOT_ROOT, WSCI_WORKSPACE_ROOT
+    from wsctl.btrfs import list_dir, path_exists
+
+    snap_dir = Path(WSCI_SNAPSHOT_ROOT)
+    if not path_exists(snap_dir):
+        print("No snapshots found")
+        return
+
+    thread = args.thread
+    entries = list_dir(snap_dir)
+
+    kept = 0
+    deleted = 0
+    for entry in entries:
+        if thread and not entry.startswith(thread):
+            continue
+        if args.dry_run:
+            print(f"  Would delete: {entry}")
+            deleted += 1
+        else:
+            snap_path = snap_dir / entry
+            try:
+                subprocess.run(
+                    ["sudo", "btrfs", "subvolume", "delete", str(snap_path)],
+                    capture_output=True, text=True, timeout=10,
+                    check=True,
+                )
+                print(f"  Deleted: {entry}")
+                deleted += 1
+            except subprocess.CalledProcessError:
+                kept += 1
+
+    if args.dry_run:
+        print(f"\nWould delete {deleted} snapshots")
+    else:
+        print(f"\nDeleted {deleted} snapshots" + (f", {kept} kept" if kept else ""))
+
+
 def _cmd_restore(args: argparse.Namespace) -> None:
     try:
         restore_workspace(args.name, args.snapshot)
@@ -141,12 +182,19 @@ def _cmd_setup(args: argparse.Namespace) -> None:
 
 
 def _cmd_attach(args: argparse.Namespace) -> None:
-    print(f"Attaching to workspace '{args.name}'...")
-    print("(not yet implemented — use machinectl shell or nsenter)")
     import subprocess
-    subprocess.run(
-        ["sudo", "machinectl", "shell", f"chxk@{args.name}", "/bin/bash"],
-    )
+    from wsctl.nspawn import is_running
+    if not is_running(args.name):
+        print(f"Error: Thread '{args.name}' is not running", file=sys.stderr)
+        print(f"  Start it first: wsctl start {args.name}", file=sys.stderr)
+        sys.exit(1)
+    user = args.user or "chxk"
+    cmd = ["sudo", "machinectl", "shell", f"{user}@{args.name}"]
+    if args.command:
+        cmd.extend(["/bin/sh", "-c", args.command])
+    else:
+        cmd.append("/bin/bash")
+    subprocess.run(cmd)
 
 
 def _cmd_log(args: argparse.Namespace) -> None:
@@ -597,6 +645,14 @@ def main() -> None:
     p_snap.add_argument("--label", "-l", help="Snapshot label")
     p_snap.set_defaults(func=_cmd_snapshot)
 
+    p_snaps = sub.add_parser("snapshots", help="Manage snapshots")
+    snaps_sub = p_snaps.add_subparsers(dest="snaps_command")
+
+    snaps_prune = snaps_sub.add_parser("prune", help="Delete old snapshots")
+    snaps_prune.add_argument("--thread", "-t", help="Only prune snapshots for this thread")
+    snaps_prune.add_argument("--dry-run", action="store_true", help="Show what would be deleted")
+    snaps_prune.set_defaults(func=_cmd_snapshots_prune)
+
     p_restore = sub.add_parser("restore", help="Restore a workspace from a snapshot")
     p_restore.add_argument("name", help="Workspace name")
     p_restore.add_argument("snapshot", help="Snapshot name")
@@ -615,6 +671,8 @@ def main() -> None:
 
     p_attach = sub.add_parser("attach", help="Attach to a running workspace")
     p_attach.add_argument("name", help="Workspace name")
+    p_attach.add_argument("--user", "-u", help="User to connect as (default: chxk)")
+    p_attach.add_argument("command", nargs="?", help="Command to run (default: shell)")
     p_attach.set_defaults(func=_cmd_attach)
 
     p_log = sub.add_parser("log", help="Show git log for a workspace")
