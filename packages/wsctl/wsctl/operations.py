@@ -233,6 +233,7 @@ def merge_workspace(source_name: str, target_name: str, prune: bool = False) -> 
 
     source_was_running = is_running(source_name)
     target_was_running = is_running(target_name)
+
     if source_was_running:
         stop_workspace(source_name)
     if target_was_running:
@@ -248,9 +249,6 @@ def merge_workspace(source_name: str, target_name: str, prune: bool = False) -> 
 
         source_manifest["merged_into"] = {"workspace_id": target_manifest["workspace"]["id"]}
         save_manifest(source_path, source_manifest)
-
-    if not source_was_running:
-        stop_workspace(source_name)
 
     summary = {
         "source": source_name,

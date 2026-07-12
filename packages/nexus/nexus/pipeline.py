@@ -167,7 +167,7 @@ def embed_events(thread_name: str, limit: int = 50) -> tuple[str, list[float]]:
     return summary, vector
 
 
-def cluster_threads(thread_names: list[str], threshold: float = 0.6) -> list[dict]:
+def cluster_threads(thread_names: list[str], threshold: float = 0.7) -> list[dict]:
     if len(thread_names) < 2:
         return []
 
@@ -195,7 +195,7 @@ def cluster_threads(thread_names: list[str], threshold: float = 0.6) -> list[dic
     return sorted(overlaps, key=lambda x: x["similarity"], reverse=True)
 
 
-def detect_drift(thread_name: str, window_a: int = 50, window_b: int = 20) -> dict | None:
+def detect_drift(thread_name: str, window_a: int = 60, window_b: int = 30) -> dict | None:
     all_events = recent_events(thread_name, 200)
     if len(all_events) < window_b:
         return None
@@ -213,7 +213,7 @@ def detect_drift(thread_name: str, window_a: int = 50, window_b: int = 20) -> di
     recent_vec = embed_text(recent_text)
     similarity = cosine_similarity(older_vec, recent_vec)
 
-    if similarity >= 0.7:
+    if similarity >= 0.6:
         return None
 
     return {
