@@ -12,6 +12,7 @@ from wsctl.btrfs import (
 )
 from wsctl.manifest import create_manifest, load_manifest, add_snapshot, save_manifest
 from wsctl.nspawn import nspawn_boot, machinectl_poweroff, is_running, machinectl_list
+from wsctl.git import init_repo, commit as git_commit, log as git_log, diff as git_diff, status as git_status
 
 
 def create_workspace(name: str, profile: str = "headless") -> dict:
@@ -23,6 +24,14 @@ def create_workspace(name: str, profile: str = "headless") -> dict:
 
     manifest = create_manifest(ws_path, name)
     manifest["nix"]["profile"] = profile
+
+    commit_hash = init_repo(ws_path, name, manifest["workspace"]["id"])
+    manifest["git"] = {
+        "initial_commit": commit_hash,
+        "last_commit": commit_hash,
+        "repo_path": str(ws_path),
+    }
+
     save_manifest(ws_path, manifest)
 
     return manifest

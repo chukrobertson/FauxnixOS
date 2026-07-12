@@ -13,23 +13,41 @@ def btrfs_snapshot(source: Path, dest: Path, readonly: bool = False) -> None:
 
 
 def btrfs_delete(subvol: Path) -> None:
-    result = subprocess.run(
-        ["sudo", "btrfs", "subvolume", "delete", str(subvol)],
-        capture_output=True, text=True,
+    children = _btrfs_child_ids(subvol)
+    for child_id in reversed(children):
+        subprocess.run(
+            ["sudo", "btrfs", "subvolume", "delete", "-i", str(child_id), str(subvol.parent)],
+            capture_output=True,
+        )
+
+    subprocess.run(
+        ["sudo", "chattr", "-R", "-f", "-i", str(subvol)],
+        capture_output=True,
     )
-    if result.returncode != 0:
-        subprocess.run(
-            ["sudo", "chattr", "-R", "-f", "-i", str(subvol)],
-            capture_output=True,
-        )
-        subprocess.run(
-            ["sudo", "rm", "-rf", str(subvol)],
-            capture_output=True,
-        )
-        subprocess.run(
-            ["sudo", "btrfs", "subvolume", "delete", str(subvol)],
-            check=True, capture_output=True, text=True,
-        )
+    subprocess.run(
+        ["sudo", "rm", "-rf", f"{subvol}/*"],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["sudo", "btrfs", "subvolume", "delete", str(subvol)],
+        check=True, capture_output=True, text=True,
+    )
+
+
+def _btrfs_child_ids(subvol: Path) -> list[int]:
+    result = subprocess.run(
+        ["sudo", "btrfs", "subvolume", "list", "-o", str(subvol)],
+        check=True, capture_output=True, text=True,
+    )
+    ids: list[int] = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split()
+        for i, p in enumerate(parts):
+            if p == "ID" and i + 1 < len(parts):
+                ids.append(int(parts[i + 1]))
+    return ids
 
 
 def btrfs_subvolume_list(parent: Path) -> list[str]:

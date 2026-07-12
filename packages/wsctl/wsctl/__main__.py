@@ -130,6 +130,72 @@ def _cmd_attach(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_log(args: argparse.Namespace) -> None:
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.git import log as git_log
+
+    ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
+    if not ws_path.exists():
+        print(f"Error: Workspace '{args.name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    entries = git_log(ws_path, n=args.n)
+    if not entries:
+        print("No commits")
+        return
+
+    for e in entries:
+        print(f"{e['hash']}  {e['date'][:19]}  {e['message']}")
+
+
+def _cmd_commit(args: argparse.Namespace) -> None:
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.git import commit as git_commit, status as git_status
+    from wsctl.manifest import load_manifest, save_manifest
+
+    ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
+    if not ws_path.exists():
+        print(f"Error: Workspace '{args.name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    st = git_status(ws_path)
+    if not st and not args.allow_empty:
+        print("Nothing to commit (use --allow-empty to force)")
+        return
+
+    print(f"Changes:\n{st}" if st else "(empty commit)")
+    commit_hash = git_commit(ws_path, args.message)
+    print(f"Committed: {commit_hash}")
+
+    manifest = load_manifest(ws_path)
+    if manifest and "git" in manifest:
+        manifest["git"]["last_commit"] = commit_hash
+        save_manifest(ws_path, manifest)
+
+
+def _cmd_diff(args: argparse.Namespace) -> None:
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.git import diff as git_diff
+
+    ws_a = Path(WSCI_WORKSPACE_ROOT) / args.a
+    ws_b = Path(WSCI_WORKSPACE_ROOT) / args.b
+    if not ws_a.exists():
+        print(f"Error: Workspace '{args.a}' not found", file=sys.stderr)
+        sys.exit(1)
+    if not ws_b.exists():
+        print(f"Error: Workspace '{args.b}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    output = git_diff(ws_a, ws_b)
+    if output.strip():
+        print(output)
+    else:
+        print("No differences")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="wsctl",
@@ -179,6 +245,22 @@ def main() -> None:
     p_attach = sub.add_parser("attach", help="Attach to a running workspace")
     p_attach.add_argument("name", help="Workspace name")
     p_attach.set_defaults(func=_cmd_attach)
+
+    p_log = sub.add_parser("log", help="Show git log for a workspace")
+    p_log.add_argument("name", help="Workspace name")
+    p_log.add_argument("-n", type=int, default=20, help="Number of commits")
+    p_log.set_defaults(func=_cmd_log)
+
+    p_commit = sub.add_parser("commit", help="Commit workspace changes to git")
+    p_commit.add_argument("name", help="Workspace name")
+    p_commit.add_argument("-m", "--message", required=True, help="Commit message")
+    p_commit.add_argument("--allow-empty", action="store_true", help="Allow empty commits")
+    p_commit.set_defaults(func=_cmd_commit)
+
+    p_diff = sub.add_parser("diff", help="Diff two workspace git repos")
+    p_diff.add_argument("a", help="First workspace")
+    p_diff.add_argument("b", help="Second workspace")
+    p_diff.set_defaults(func=_cmd_diff)
 
     args = parser.parse_args()
     args.func(args)
