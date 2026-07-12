@@ -361,12 +361,27 @@ class ContextStreamService(BaseService):
     def tick(self):
         if not self._streamer:
             return
+        _stream_system_heartbeat(self._streamer)
         fg = get_foreground_process()
         if fg:
             app_name = fg.get("process_name", "")
             title = fg.get("window_title", "")
             if app_name:
                 self._streamer.on_window_change(app_name, title)
+
+
+def _stream_system_heartbeat(streamer) -> None:
+    try:
+        import psutil
+        from fennix.stream import stream_event
+        cpu = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory().percent
+        stream_event(
+            streamer._thread_name, "system",
+            {"cpu": round(cpu, 1), "mem": round(mem, 1)},
+        )
+    except Exception:
+        pass
 
     def service_running(self, name: str) -> bool:
         svc = self.get_service(name)

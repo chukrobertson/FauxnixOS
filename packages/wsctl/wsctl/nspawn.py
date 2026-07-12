@@ -11,6 +11,8 @@ def nspawn_boot(workspace_path: Path, shared_path: Path) -> subprocess.Popen:
             f"--directory={workspace_path}",
             "--bind=/nix/store",
             f"--bind={shared_path}:/shared",
+            "--bind=/run/nexus",
+            "--bind=/home/chxk/Projects/fauxnix-core:/fauxnix-core",
             "--private-network",
             "--boot",
         ],
