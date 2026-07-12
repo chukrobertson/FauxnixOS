@@ -198,3 +198,94 @@ def list_workspaces() -> list[dict]:
         result.append(ws_info)
 
     return result
+
+
+def merge_workspace(source_name: str, target_name: str, prune: bool = False) -> dict:
+    source_path = Path(WSCI_WORKSPACE_ROOT) / source_name
+    target_path = Path(WSCI_WORKSPACE_ROOT) / target_name
+
+    if not path_exists(source_path):
+        raise FileNotFoundError(f"Source workspace '{source_name}' not found")
+    if not path_exists(target_path):
+        raise FileNotFoundError(f"Target workspace '{target_name}' not found")
+
+    source_manifest = load_manifest(source_path)
+    target_manifest = load_manifest(target_path)
+
+    snapshot_workspace(source_name, f"pre-merge-{target_name}")
+    snapshot_workspace(target_name, f"pre-merge-{source_name}")
+
+    source_was_running = is_running(source_name)
+    target_was_running = is_running(target_name)
+    if source_was_running:
+        stop_workspace(source_name)
+    if target_was_running:
+        stop_workspace(target_name)
+
+    files_copied = _copy_workspace_files(source_path, target_path)
+
+    if source_manifest and target_manifest:
+        merged_ids = list(target_manifest["merged_from"]["workspace_ids"])
+        merged_ids.append(source_manifest["workspace"]["id"])
+        target_manifest["merged_from"]["workspace_ids"] = merged_ids
+        save_manifest(target_path, target_manifest)
+
+        source_manifest["merged_into"] = {"workspace_id": target_manifest["workspace"]["id"]}
+        save_manifest(source_path, source_manifest)
+
+    if not source_was_running:
+        stop_workspace(source_name)
+
+    summary = {
+        "source": source_name,
+        "target": target_name,
+        "files_copied": files_copied,
+        "snapshots_created": [
+            f"{source_name}-pre-merge-{target_name}",
+            f"{target_name}-pre-merge-{source_name}",
+        ],
+        "archived": not prune,
+    }
+
+    if prune:
+        delete_workspace(source_name)
+        summary["archived"] = False
+
+    if target_was_running:
+        start_workspace(target_name)
+
+    return summary
+
+
+def _copy_workspace_files(source_path: Path, target_path: Path) -> int:
+    src_workspace = source_path / "workspace"
+    tgt_workspace = target_path / "workspace"
+
+    if not path_exists(src_workspace):
+        return 0
+
+    if not path_exists(tgt_workspace):
+        subprocess.run(["sudo", "mkdir", "-p", str(tgt_workspace)], check=True)
+
+    before = set()
+    list_result = subprocess.run(
+        ["sudo", "find", str(tgt_workspace), "-type", "f"],
+        capture_output=True, text=True,
+    )
+    if list_result.returncode == 0:
+        before = set(list_result.stdout.strip().split("\n"))
+
+    subprocess.run(
+        ["sudo", "cp", "-rn", f"{src_workspace}/.", str(tgt_workspace)],
+        capture_output=True, text=True,
+    )
+
+    after = set()
+    list_result = subprocess.run(
+        ["sudo", "find", str(tgt_workspace), "-type", "f"],
+        capture_output=True, text=True,
+    )
+    if list_result.returncode == 0:
+        after = set(list_result.stdout.strip().split("\n"))
+
+    return len(after - before)

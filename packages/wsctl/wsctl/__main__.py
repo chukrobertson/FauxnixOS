@@ -54,6 +54,23 @@ def _cmd_fork(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _cmd_merge(args: argparse.Namespace) -> None:
+    from wsctl.operations import merge_workspace
+    try:
+        summary = merge_workspace(args.source, args.target, prune=args.prune)
+        print(f"Merged '{args.source}' → '{args.target}'")
+        print(f"  Files copied: {summary['files_copied']}")
+        print(f"  Snapshots: {summary['snapshots_created'][0]}")
+        print(f"  Snapshots: {summary['snapshots_created'][1]}")
+        if args.prune:
+            print(f"  Source pruned: {args.source}")
+        else:
+            print(f"  Source archived (use --prune to delete)")
+    except (FileNotFoundError, FileExistsError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _cmd_snapshot(args: argparse.Namespace) -> None:
     try:
         snap_name = snapshot_workspace(args.name, label=args.label)
@@ -220,6 +237,12 @@ def main() -> None:
     p_fork.add_argument("source", help="Source workspace name")
     p_fork.add_argument("target", help="Target workspace name")
     p_fork.set_defaults(func=_cmd_fork)
+
+    p_merge = sub.add_parser("merge", help="Merge a workspace into another")
+    p_merge.add_argument("source", help="Source workspace to merge from")
+    p_merge.add_argument("target", help="Target workspace to merge into")
+    p_merge.add_argument("--prune", action="store_true", help="Delete source after merge")
+    p_merge.set_defaults(func=_cmd_merge)
 
     p_snap = sub.add_parser("snapshot", help="Snapshot a workspace")
     p_snap.add_argument("name", help="Workspace name")

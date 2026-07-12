@@ -149,18 +149,84 @@ class ThreadSupervisor(BaseService):
         return dict(self._threads)
 
 
-class SuggestionEngine(BaseService):
-    name = "suggestion_engine"
-    interval_s = 300
+class PipelineRunner(BaseService):
+    name = "pipeline_runner"
+    interval_s = 60
 
     def tick(self) -> None:
-        pass
+        from nexus.db import thread_names, count_events
+        from nexus.pipeline import cluster_threads, detect_drift
 
-    def suggest_workload(self, description: str) -> dict | None:
-        return None
+        names = thread_names()
+        if not names:
+            return
 
-    def check_drift(self) -> list[dict]:
-        return []
+        for name in names:
+            count = count_events(name)
+            if count < 5:
+                continue
+            drift = detect_drift(name)
+            if drift:
+                _queue_suggestion("drift", drift["thread_name"], {
+                    "similarity": drift["similarity"],
+                    "older_topic": drift["older_topic"],
+                    "recent_topic": drift["recent_topic"],
+                })
 
-    def check_overlap(self) -> list[dict]:
-        return []
+        if len(names) >= 2:
+            overlaps = cluster_threads(names)
+            for o in overlaps[:3]:
+                _queue_suggestion("merge", o["thread_a"], {
+                    "thread_b": o["thread_b"],
+                    "similarity": o["similarity"],
+                })
+
+
+def _queue_suggestion(suggestion_type: str, thread_name: str, data: dict) -> None:
+    from nexus.db import get_conn
+
+    conn = get_conn()
+
+    if suggestion_type == "merge":
+        existing = conn.execute(
+            """SELECT id FROM suggestions
+               WHERE suggestion_type = 'merge'
+               AND thread_name = ? AND thread_b_name = ?
+               AND status = 'pending'""",
+            (thread_name, data.get("thread_b", "")),
+        ).fetchone()
+        if existing:
+            conn.close()
+            return
+
+    titles = {
+        "drift": f"Topic drift detected in '{thread_name}'",
+        "merge": f"Threads '{thread_name}' and '{data.get('thread_b', '?')}' are similar",
+    }
+
+    bodies = {
+        "drift": f"Recent activity differs from historical pattern (similarity: {data.get('similarity', '?')}). Consider forking a new thread.",
+        "merge": f"These threads have {data.get('similarity', '?')} topic similarity. Consider merging.",
+    }
+
+    action = {
+        "drift": f"wsctl fork {thread_name} {thread_name}-drift",
+        "merge": f"wsctl merge {thread_name} {data.get('thread_b', '?')}",
+    }
+
+    conn.execute(
+        """INSERT INTO suggestions
+           (suggestion_type, thread_name, thread_b_name, title, body, action_json, confidence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            suggestion_type,
+            thread_name,
+            data.get("thread_b", ""),
+            titles.get(suggestion_type, suggestion_type),
+            bodies.get(suggestion_type, ""),
+            action.get(suggestion_type, ""),
+            data.get("similarity", 0.5),
+        ),
+    )
+    conn.commit()
+    conn.close()
