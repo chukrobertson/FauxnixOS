@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus"
+version = "0.1.0"
+description = "FauxnixOS Nexus — host-level daemon for thread orchestration, context aggregation, and ML pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "fauxnix-tools>=0.1.0",
+]
+
+[project.scripts]
+nexus = "nexus.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["nexus*"]

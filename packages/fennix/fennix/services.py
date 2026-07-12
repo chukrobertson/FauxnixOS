@@ -313,13 +313,14 @@ class FileChangeReconciler(BaseService):
 
 
 class ServicesManager:
-    def __init__(self):
+    def __init__(self, thread_name: str = "workspace"):
         self._services: list[BaseService] = [
             ClipboardContextWatcher(),
             OpenFilesTracker(),
             SystemStateLogger(),
             AutoIngestionScanner(),
             FileChangeReconciler(),
+            ContextStreamService(thread_name),
         ]
 
     def start(self):
@@ -340,7 +341,32 @@ class ServicesManager:
         for s in self._services:
             if s.name == name:
                 return s
-        return None
+    return None
+
+
+class ContextStreamService(BaseService):
+    name = "context_streamer"
+    interval = 5
+
+    def __init__(self, thread_name: str = "workspace"):
+        super().__init__()
+        self._thread_name = thread_name
+        self._streamer = None
+
+    def start(self):
+        from fennix.stream import ContextStreamer
+        self._streamer = ContextStreamer(self._thread_name)
+        super().start()
+
+    def tick(self):
+        if not self._streamer:
+            return
+        fg = get_foreground_process()
+        if fg:
+            app_name = fg.get("process_name", "")
+            title = fg.get("window_title", "")
+            if app_name:
+                self._streamer.on_window_change(app_name, title)
 
     def service_running(self, name: str) -> bool:
         svc = self.get_service(name)

@@ -24,6 +24,7 @@ class FennixConfig:
             d.mkdir(parents=True, exist_ok=True)
 
         self.model = os.getenv("FENNIX_MODEL", "qwen2.5:7b")
+        self.thread_name = os.getenv("FENNIX_THREAD_NAME", "workspace")
         self.ingest_dirs = [
             Path(p) for p in os.getenv("FENNIX_INGEST_DIRS", "").split(":")
             if p.strip()

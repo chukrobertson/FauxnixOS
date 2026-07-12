@@ -82,6 +82,7 @@ in
           "FENNIX_AUTO_INGEST=${if cfg.autoIngest then "true" else "false"}"
           "FENNIX_CLIPBOARD_WATCH=${if cfg.clipboardWatch then "true" else "false"}"
           "FENNIX_RECALL_TOPK=${toString cfg.recallTopK}"
+          "FENNIX_THREAD_NAME=%H"
         ];
       };
     };

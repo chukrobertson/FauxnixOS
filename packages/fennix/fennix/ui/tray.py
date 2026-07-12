@@ -16,10 +16,10 @@ from fennix.db import init_fennix_db
 
 
 class FennixTray:
-    def __init__(self):
+    def __init__(self, thread_name: str = "workspace"):
         self.app = QApplication(sys.argv) if HAS_QT else None
         self._tray: QSystemTrayIcon | None = None
-        self._services = ServicesManager()
+        self._services = ServicesManager(thread_name)
         self._window = None
         self._quickbar = None
 
@@ -67,7 +67,7 @@ class FennixTray:
         self._status_actions: dict[str, QAction] = {}
         for svc_name in ["clipboard_watcher", "open_files_tracker",
                           "system_state_logger", "auto_ingestion_scanner",
-                          "file_change_reconciler"]:
+                          "file_change_reconciler", "context_streamer"]:
             action = status_menu.addAction(svc_name.replace("_", " ").title())
             action.setCheckable(True)
             action.triggered.connect(lambda checked, n=svc_name: self._services.toggle_service(n, checked))
@@ -204,7 +204,7 @@ class FennixTray:
             self.app.quit()
 
 
-def run_tray():
+def run_tray(thread_name: str = "workspace"):
     init_fennix_db()
-    tray = FennixTray()
+    tray = FennixTray(thread_name)
     tray.run()

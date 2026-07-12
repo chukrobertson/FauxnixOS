@@ -111,7 +111,7 @@ class FennixWindow(QMainWindow):
         self._service_checkboxes: dict[str, QCheckBox] = {}
         for svc_name in ["clipboard_watcher", "open_files_tracker",
                           "system_state_logger", "auto_ingestion_scanner",
-                          "file_change_reconciler"]:
+                          "file_change_reconciler", "context_streamer"]:
             cb = QCheckBox(svc_name.replace("_", " ").title())
             cb.setChecked(self._services.service_running(svc_name))
             cb.toggled.connect(lambda checked, n=svc_name: self._services.toggle_service(n, checked))

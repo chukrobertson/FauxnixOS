@@ -73,25 +73,95 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
 
 ## Component Roles
 
-### Nexus — The Host Guard
+### Nexus — The Host Daemon
 - **Runs on:** Immutable NixOS base system
 - **Scope:** Host-wide, cross-thread
+- **Stability contract:** Must not modify the host system. All changes happen inside threads. Nexus reads data, manages containers, and coordinates — never installs packages or modifies `/nix/store`.
 - **Responsibilities:**
-  - Thread lifecycle (wsctl backend — create, fork, merge, snapshot, restore, delete)
-  - Security monitoring, intrusion detection (future phases)
-  - ML pipeline orchestration (aggregates context from all Fennix instances)
-  - Cross-thread suggestions ("thread A and B are 87% similar — merge?")
-  - Ollama daemon management (single LLM server for all threads)
+  - **Thread lifecycle** — create threads based on user workload requests ("I need to work on PDFs" → Nexus spins up a thread with Zathura, Pandoc, LaTeX). Backs `wsctl` commands.
+  - **Context aggregation** — Receives activity streams from all Fennix instances via unix sockets. Aggregates into a shared SQLite DB.
+  - **ML pipeline** — Textify → embed → cluster → detect drift and thread overlap.
+  - **Suggestion engine** — "Thread A and B are 87% similar — merge?" "You drifted from coding into writing — fork?"
+  - **Ollama coordination** — Single LLM server for all threads. Routes requests from Fennix instances.
+  - **Security monitoring** — Intrusion detection, audit logging (future).
 
 ### Fennix — The In-Thread Assistant
-- **Runs on:** Inside each thread container
+- **Runs on:** Inside each thread container (one per thread)
 - **Scope:** Single thread
 - **Responsibilities:**
-  - User activity monitoring (window titles, file changes, browser activity, git, terminal)
-  - Context collection (feeds data to Nexus ML pipeline)
-  - On-demand component installation (nix-shell, nix profile)
-  - In-thread chat and assistance
-  - Desktop shell (Qt6 panels, tray, quickbar)
+  - **Context collection** — Window titles, file changes, browser domains, terminal history, git activity, idle state. Already implemented via `fennix.context.*` and `fennix.services.*`.
+  - **Context streaming** — Feeds activity data to Nexus via unix socket. Aggregated context + file metadata + ML results from Archivist.
+  - **Software installation** — `nix-shell -p`, `nix profile install`, `nix-env -iA`. Install components the user needs for the current task.
+  - **Thread adaptation** — Modify the thread environment to better suit the task (install missing tools, adjust config).
+  - **Desktop shell** — Qt6 panels, system tray, quickbar overlay. Windows 11 or macOS feel profiles via QSS themes.
+  - **User assistance** — In-thread chat, recall, file search via `fennix.recall` and `fennix.ingestion`.
+  - **Nexus collaboration** — Sends activity context to Nexus, receives merge/fork suggestions, presents them to user.
+
+### Nexus ↔ Fennix Communication
+
+```
+┌──────────────────────────────────────────────┐
+│                  HOST SYSTEM                  │
+│                                               │
+│  ┌─────────┐         ┌──────────────────┐    │
+│  │  Nexus   │◄────────│ /run/nexus/      │    │
+│  │          │ unix    │   thread-A.sock  │    │
+│  │  context │ sockets │   thread-B.sock  │    │
+│  │  engine  │         │   thread-C.sock  │    │
+│  └────┬─────┘         └───┬──────────────┘    │
+│       │                   │                    │
+│       │ suggestions       │ activity stream    │
+│       │ (libnotify or     │ (JSONL over unix   │
+│       │  Fennix tray)     │  socket)           │
+│       │                   │                    │
+│  ┌────┴───────────────────┴─────────────────┐ │
+│  │           SHARED SQLITE DB               │ │
+│  │  (workspace_vectors, suggestions,        │ │
+│  │   thread_context, drift_events)          │ │
+│  └──────────────────────────────────────────┘ │
+│                                               │
+│  ┌──────────────────────────────────────────┐ │
+│  │         IMMUTABLE NIXOS BASE             │ │
+│  │  nexus.service  │  ollama.service        │ │
+│  └──────────────────────────────────────────┘ │
+└──────────────┬───────────────┬────────────────┘
+               │               │
+    ┌──────────▼───┐   ┌───────▼──────────┐
+    │  Thread A     │   │  Thread B         │
+    │  ┌─────────┐  │   │  ┌─────────┐     │
+    │  │ Fennix   │  │   │  │ Fennix   │     │
+    │  │          ├──┼───┼──┤          │     │
+    │  │ context  │  │   │  │ context  │     │
+    │  │ stream   │  │   │  │ stream   │     │
+    │  └─────────┘  │   │  └─────────┘     │
+    └───────────────┘   └──────────────────┘
+```
+
+**Activity stream protocol (Fennix → Nexus):**
+```json
+{"ts":"2026-07-12T00:50:00Z","thread":"ml-paper","src":"window",
+ "data":{"app":"zathura","title":"attention.pdf"},"dur":null}
+{"ts":"2026-07-12T00:50:01Z","thread":"ml-paper","src":"file",
+ "data":{"path":"/shared/notes/attention.md","action":"modify"}}
+{"ts":"2026-07-12T00:50:02Z","thread":"ml-paper","src":"git",
+ "data":{"repo":"/shared/transformers","branch":"experiment","msg":"Add attention","action":"commit"}}
+{"ts":"2026-07-12T00:50:03Z","thread":"ml-paper","src":"browser",
+ "data":{"domain":"arxiv.org","title":"Attention Is All You Need"}}
+{"ts":"2026-07-12T00:50:04Z","thread":"ml-paper","src":"idle",
+ "data":{"state":"active","seconds":45}}
+```
+
+**Suggestion protocol (Nexus → Fennix):**
+```json
+{"type":"fork_suggest","thread":"ml-paper","confidence":0.78,
+ "title":"Fork new thread for Rust development?",
+ "body":"Your recent activity in 'ml-paper' has shifted from ML to Rust programming.",
+ "action":"wsctl fork ml-paper rust-dev --interactive"}
+{"type":"merge_suggest","thread_a":"ml-paper","thread_b":"transformers",
+ "confidence":0.89,"title":"Merge 'ml-paper' and 'transformers'?",
+ "body":"These threads are 89% similar in topic. Consider merging.",
+ "action":"wsctl merge ml-paper transformers"}
+```
 
 ### Threads — Continuity Containers
 - **What:** Container-based workspaces (systemd-nspawn + btrfs subvolume)
