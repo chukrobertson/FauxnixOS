@@ -2,10 +2,18 @@
 
 let
   cfg = config.fauxnix.immutable-base;
+  fauxnix-wallpaper = ../assets/wallpapers/Fauxnix_native.png;
+  fennix-extension = ../modules/gnome/fennix-extension;
 in
 {
   options.fauxnix.immutable-base = {
-    enable = lib.mkEnableOption "Immutable NixOS base — read-only root with tmpfs overlay. Only essential services run. Threads are the interactive layer.";
+    enable = lib.mkEnableOption "Immutable FauxnixOS base — read-only root, GNOME desktop, Nexus daemon. All work in threads.";
+
+    enableDesktop = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable GNOME desktop on the base system";
+    };
 
     persistentPaths = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -17,23 +25,18 @@ in
         "/var/lib/systemd"
         "/var/log"
       ];
-      description = "Paths that persist across reboots (must be on btrfs subvolumes)";
-    };
-
-    autoStartThreads = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "Thread names to auto-start on boot";
+      description = "Paths persisting across reboots (btrfs subvolumes)";
     };
   };
 
   config = lib.mkIf cfg.enable {
     boot.initrd.systemd.enable = true;
 
+    # Immutable root
     fileSystems."/" = {
       device = "tmpfs";
       fsType = "tmpfs";
-      options = [ "defaults" "size=4G" "mode=755" ];
+      options = [ "defaults" "size=6G" "mode=755" ];
     };
 
     fileSystems."/nix" = lib.mkIf (!config.boot.isContainer) {
@@ -51,16 +54,18 @@ in
 
     boot.initrd.supportedFilesystems = [ "btrfs" "vfat" ];
 
+    # Core services
     services.openssh = {
       enable = true;
       settings.PermitRootLogin = lib.mkForce "no";
       settings.PasswordAuthentication = lib.mkForce false;
     };
 
-    networking.firewall.allowedTCPPorts = [ 22 ];
+    services.ollama.enable = true;
 
+    # Nexus daemon
     systemd.services.nexus = {
-      description = "Nexus Host Daemon — thread orchestration and ML pipeline";
+      description = "Nexus Host Daemon";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "ollama.service" ];
       serviceConfig = {
@@ -74,36 +79,81 @@ in
       };
     };
 
-    services.ollama = {
+    # GNOME Desktop
+    services.xserver = lib.mkIf cfg.enableDesktop {
+      enable = true;
+      videoDrivers = [ "modesetting" ];
+      xkb = {
+        layout = "us";
+        options = "caps:escape";
+      };
+    };
+
+    services.displayManager.gdm = lib.mkIf cfg.enableDesktop {
       enable = true;
     };
 
-    boot.kernel.sysctl = {
-      "kernel.modules_disabled" = lib.mkDefault 1;
+    services.desktopManager.gnome = lib.mkIf cfg.enableDesktop {
+      enable = true;
     };
 
-    security.sudo.execWheelOnly = true;
+    services.pipewire = lib.mkIf cfg.enableDesktop {
+      enable = true;
+      pulse.enable = true;
+      alsa.enable = true;
+      alsa.support32Bit = true;
+    };
 
+    # GNOME Fennix extension
+    environment.systemPackages = lib.mkIf cfg.enableDesktop (with pkgs; [
+      gnome-console
+      gnome-text-editor
+      nautilus
+      gnome-shell-extensions
+    ]);
+
+    # Wallpaper + lock screen
+    programs.dconf.profiles.gdm.databases = lib.mkIf cfg.enableDesktop [
+      {
+        settings = {
+          "org/gnome/desktop/background" = {
+            picture-uri = "file://${fauxnix-wallpaper}";
+            picture-uri-dark = "file://${fauxnix-wallpaper}";
+            picture-options = "zoom";
+            primary-color = "#000000";
+          };
+          "org/gnome/desktop/screensaver" = {
+            picture-uri = "file://${fauxnix-wallpaper}";
+            picture-options = "zoom";
+          };
+        };
+      }
+    ];
+
+    # System packages
     environment.systemPackages = with pkgs; [
       git
       btrfs-progs
       python3
       curl
       htop
+      waypipe
     ];
 
-    environment.variables = {
-      PATH = [ "$HOME/.local/bin" ];
-    };
+    environment.variables.PATH = [ "$HOME/.local/bin" ];
 
+    # Hardening
+    boot.kernel.sysctl."kernel.modules_disabled" = lib.mkDefault 1;
+    security.sudo.execWheelOnly = true;
     users.users.root.initialPassword = lib.mkForce "!";
 
-    system.activationScripts.nexusDir = ''
+    networking.firewall.allowedTCPPorts = [ 22 ]
+      ++ lib.optionals cfg.enableDesktop (lib.range 5900 5920);
+
+    # Runtime directories
+    system.activationScripts.fauxnixDirs = ''
       mkdir -p /run/nexus
       chmod 777 /run/nexus
-    '';
-
-    system.activationScripts.fauxnixMounts = ''
       for path in ${lib.concatStringsSep " " cfg.persistentPaths}; do
         mkdir -p "$path"
       done

@@ -145,6 +145,7 @@ in
     python-env
     labwc
     waypipe
+    wayvnc
     xwayland
     fontconfig
     dejavu_fonts

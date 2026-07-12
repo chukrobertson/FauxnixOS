@@ -1,0 +1,7 @@
+{
+  "name": "Fennix",
+  "description": "Continuity assistant",
+  "uuid": "fennix@fauxnix.local",
+  "shell-version": ["50.1"],
+  "version": 1
+}

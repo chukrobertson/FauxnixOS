@@ -75,6 +75,13 @@ def start_workspace(name: str) -> None:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     snapshot_workspace(name, f"pre-boot-{ts}")
 
+    manifest = load_manifest(ws_path)
+    profile = manifest["nix"]["profile"] if manifest else "headless"
+    vnc_port = None
+
+    if profile in ("win11", "macos"):
+        vnc_port = _assign_vnc_port(name)
+
     shared_path = Path(WSCI_SHARED_ROOT)
     ensure_directory(shared_path)
 
@@ -88,6 +95,32 @@ def start_workspace(name: str) -> None:
         time.sleep(0.5)
 
     manifest = load_manifest(ws_path)
+    if manifest:
+        manifest["activity"]["last_active"] = datetime.now(timezone.utc).isoformat()
+        if vnc_port:
+            manifest["network"] = manifest.get("network", {})
+            manifest["network"]["vnc_port"] = vnc_port
+        save_manifest(ws_path, manifest)
+
+
+def _assign_vnc_port(name: str) -> int:
+    ws_root = Path(WSCI_WORKSPACE_ROOT)
+    used_ports: set[int] = set()
+    if path_exists(ws_root):
+        for entry in list_dir(ws_root):
+            if entry.startswith("."):
+                continue
+            m = load_manifest(ws_root / entry)
+            if m:
+                port = m.get("network", {}).get("vnc_port")
+                if port:
+                    used_ports.add(port)
+
+    for port in range(5901, 5921):
+        if port not in used_ports:
+            return port
+
+    return 5901
     if manifest:
         manifest["activity"]["last_active"] = datetime.now(timezone.utc).isoformat()
         save_manifest(ws_path, manifest)
