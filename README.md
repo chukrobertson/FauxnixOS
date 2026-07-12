@@ -12,8 +12,8 @@ FauxnixOS layers two AI assistants (Nexus on the host, Fennix in each thread) ov
 | [fennix](./packages/fennix/) | In-thread | context collection, desktop shell, user assistance |
 | [wsctl](./packages/wsctl/) | Host | thread management CLI (create, fork, merge, snapshot) |
 | nexus | Host (planned) | thread orchestration, ML pipeline, security |
-| [membrie](./packages/membrie/) | Legacy | session tracker (being absorbed into fennix) |
-| [archivist](./packages/archivist/) | Legacy | file manager (being absorbed into fennix) |
+| [archivist](./packages/archivist/) | Base + Threads | default file manager — OCR, object/face detection, media transcription, smart organization; feeds ML results to Nexus/Fennix |
+| [membrie](./packages/membrie/) | Reference | superseded app-level continuity — succeeded by OS-level Nexus/Fennix |
 
 ## Quick Start
 

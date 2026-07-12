@@ -132,11 +132,12 @@ Each thread can adopt one of two desktop feels:
                     └─────────────┘
 ```
 
-## Data Flow (Fennix → Nexus)
+## Data Flow (Fennix + Archivist → Nexus)
 
 1. Fennix (in-thread) collects: window titles, file changes, browser domains, terminal history, git activity, idle state
-2. Writes to `activity.jsonl` + streams via unix socket
-3. Nexus aggregator reads all thread sockets
+2. Archivist (in-thread) feeds: OCR text, object detection results, face tags, file classifications
+3. Combined context writes to `activity.jsonl` + streams via unix socket
+4. Nexus aggregator reads all thread sockets
 4. Textifies → embeds → clusters → detects drift/overlap
 5. Suggestions queued → delivered via libnotify or Fennix tray
 
@@ -147,8 +148,8 @@ Each thread can adopt one of two desktop feels:
 | `fauxnix-tools` | Shared DB, LLM routing, file indexing |
 | `fennix` | In-thread assistant: context collection, desktop shell, Qt6 UI |
 | `nexus` (planned) | Host daemon: thread orchestration, ML pipeline, security |
-| `membrie` | Session tracking — being absorbed into fennix |
-| `archivist` | File management — being absorbed into fennix |
+| `archivist` | Default file manager (base + threads) — OCR, face/object detection, media transcription; feeds ML results to Fennix (in-thread) and Nexus (host) |
+| `membrie` | Superseded — app-level continuity succeeded by the OS-level thread system |
 | `wsctl` | Thread management CLI |
 
 ## Phases
@@ -167,6 +168,8 @@ Each thread can adopt one of two desktop feels:
 - **Thread**: A containerized workspace. Short for "thread of continuity."
 - **Nexus**: Host-level daemon — manages threads, ML pipeline, security.
 - **Fennix**: In-thread assistant — monitors activity, assists the user.
+- **Archivist**: Default file manager — OCR, object/face detection, media transcription. Feeds ML results to Nexus and Fennix.
+- **Membrie**: Superseded. App-level continuity experiment — succeeded by the OS-level thread system.
 - **Base System**: The immutable NixOS host — read-only, boots clean every time.
 - **Spin**: Fork a new thread from an existing one.
 - **Join**: Merge two threads into one.

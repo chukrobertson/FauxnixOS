@@ -37,15 +37,21 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
 │  │ │ assistant │ │   │ │ assistant │ │   │ │ assistant │ │           │
 │  │ └─────┬────┘ │   │ └─────┬────┘ │   │ └─────┬────┘ │           │
 │  │       │      │   │       │      │   │       │      │           │
+│  │ ┌─────▼────┐ │   │ ┌─────▼────┐ │   │ ┌─────▼────┐ │           │
+│  │ │ARCHIVIST │ │   │ │ARCHIVIST │ │   │ │ARCHIVIST │ │           │
+│  │ │file mgr  │ │   │ │file mgr  │ │   │ │file mgr  │ │           │
+│  │ │OCR/ML    │ │   │ │OCR/ML    │ │   │ │OCR/ML    │ │           │
+│  │ └─────┬────┘ │   │ └─────┬────┘ │   │ └─────┬────┘ │           │
+│  │       │      │   │       │      │   │       │      │           │
 │  │  context ────┼───┼───────┼──────┼───┼───context    │           │
-│  │  collection  │   │       │      │   │              │           │
+│  │  + ML meta   │   │       │      │   │  + ML meta   │           │
 │  └──────┬───────┘   └───────┼──────┘   └──────────────┘           │
 │         │                   │                                      │
 │         └───────────────────┘                                      │
 │                   │                                                │
 │         ┌─────────▼─────────┐                                      │
 │         │   ML PIPELINE     │                                      │
-│         │   (Nexus ↔ Fennix)│                                      │
+│         │   (Nexus-hosted)  │                                      │
 │         │                    │                                      │
 │         │ • Embedding model  │                                      │
 │         │ • Topic clustering │                                      │
@@ -59,6 +65,7 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
 │  │                                                               │ │
 │  │  /shared (btrfs, bind-mounted into all threads)               │ │
 │  │  fauxnix-tools (shared Python library)                        │ │
+│  │  Archivist ML metadata (OCR, faces, objects, transcripts)     │ │
 │  │  SQLite + ChromaDB (persistent AI state)                      │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────┘
@@ -96,10 +103,29 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
   - Desktop feel profiles: win11 or macos (labwc compositor + Fennix Qt6 panels)
 - **Naming:** Threads of continuity. The CLI still uses `wsctl` for workspace control.
 
+### Archivist — The File Manager & Data Feeder
+- **What:** Default file manager for both the base system and thread containers
+- **Runs on:** Base system and inside each thread
+- **Capabilities:**
+  - OCR (Tesseract) — extract text from images and scanned documents
+  - Object detection (YOLO / OWL-ViT) — identify objects in images and video
+  - Face detection and recognition (InsightFace) — tag people in photo libraries
+  - Media transcription (Whisper) — transcribe audio and video content
+  - Smart organization — LLM-driven file classification, tagging, and renaming
+  - Unified search — cross-source search across all indexed content
+- **Data flow:**
+  - Archivist (in-thread) → enriches files with ML metadata → feeds results to **Fennix**
+  - Archivist (base) → enriches shared files with ML metadata → feeds results to **Nexus**
+  - Both paths feed into the ML pipeline for cross-thread awareness
+
+### Membrie — Superseded
+- **What was:** App-level session tracker and memory companion
+- **Status:** Superseded by Nexus (host-level orchestration) and Fennix (OS-level context awareness). The application-layer approach to continuity was a stepping stone — the thread system now provides continuity at the OS level rather than per-application. Code kept for reference.
+
 ### ML Pipeline
 - **Embedding model:** all-MiniLM-L6-v2 (CPU) or nomic-embed-text (Ollama)
-- **Data flow:** Fennix (in-thread) → activity JSONL → Nexus aggregator → embeddings → clustering
-- **Shared state:** SQLite DB on host, accessible by both Nexus and Fennix components
+- **Data flow:** Fennix (in-thread) + Archivist → activity JSONL + file metadata → Nexus aggregator → embeddings → clustering
+- **Shared state:** SQLite DB on host, accessible by all Nexus, Fennix, and Archivist components
 
 ## Directory Structure
 
@@ -136,8 +162,8 @@ fauxnix-core/
 │   │       ├── security/         # Intrusion detection
 │   │       ├── pipeline/         # ML orchestration
 │   │       └── services/
-│   ├── membrie/                  # Session tracker (legacy, being absorbed)
-│   ├── archivist/                # File manager (legacy, being absorbed)
+│   ├── archivist/                # Default file manager — OCR, face/object detection, media transcription
+│   ├── membrie/                  # Superseded — app-level session tracker
 │   └── wsctl/                    # Thread management CLI
 │       └── wsctl/
 │           ├── btrfs.py

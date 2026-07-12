@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "membrie"
+version = "3.0.0"
+description = "AI-powered session tracking and memory companion for FauxnixOS"
+requires-python = ">=3.10"
+dependencies = [
+    "fauxnix-tools>=0.1.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.1.0",
+]
+
+[project.optional-dependencies]
+full = [
+    "PyQt6>=6.5.0",
+    "pyperclip>=1.8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["membrie*"]
+
+[project.scripts]
+membrie = "membrie.__main__:main"

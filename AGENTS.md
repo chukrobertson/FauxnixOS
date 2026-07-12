@@ -9,8 +9,8 @@ FauxnixOS is a NixOS-based operating system with containerized **threads of cont
 - **fauxnix-tools** — shared Python library (file ops, vision, media, LLM)
 - **fennix** — in-thread assistant (context collection, desktop shell, user assistance)
 - **nexus** — host-level daemon (thread orchestration, security, ML pipeline) — PLANNED
-- **membrie** — session tracker (legacy, being absorbed into fennix/nexus)
-- **archivist** — intelligent file manager (legacy, being absorbed into fennix/nexus)
+- **archivist** — default file manager (OCR, object/face detection, media transcription), feeds ML results to Fennix/Nexus
+- **membrie** — superseded app-level session tracker (succeeded by OS-level Nexus/Fennix)
 - **wsctl** — thread management CLI (create, fork, merge, snapshot, restore)
 
 ## Thread Terminology
@@ -48,8 +48,8 @@ fauxnix-core/
 │   │   └── fennix/
 │   ├── nexus/                    # Host daemon (PLANNED — depends on fauxnix-tools)
 │   │   └── nexus/
-│   ├── membrie/                  # Legacy (being absorbed)
-│   ├── archivist/                # Legacy (being absorbed)
+│   ├── archivist/                # File manager — OCR, ML, face/object detection
+│   ├── membrie/                  # Superseded (app-level continuity)
 │   └── wsctl/                    # Thread management CLI
 │       ├── pyproject.toml
 │       └── wsctl/

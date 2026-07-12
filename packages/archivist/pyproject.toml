@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archivist"
+version = "0.1.0"
+description = "AI-powered intelligent file manager for FauxnixOS"
+requires-python = ">=3.10"
+dependencies = [
+    "fauxnix-tools>=0.1.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PyQt6>=6.5.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["archivist*"]
+
+[project.scripts]
+archivist = "archivist.__main__:main"

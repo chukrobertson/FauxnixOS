@@ -1,0 +1,384 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import threading
+import time
+
+from pathlib import Path
+
+from fauxnix_tools.db import get_conn as _get_fauxnix_conn
+from fennix.config import config
+
+
+class BaseService:
+    name = "base"
+    interval = 60
+
+    def __init__(self):
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def start(self):
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name=self.name, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            try:
+                self.tick()
+            except Exception:
+                pass
+
+    def tick(self):
+        pass
+
+
+class ClipboardContextWatcher(BaseService):
+    name = "clipboard_watcher"
+    interval = 2
+
+    def __init__(self):
+        super().__init__()
+        self._last_hash = ""
+
+    def tick(self):
+        if not config.clipboard_watch:
+            return
+        try:
+            import pyperclip
+            content = pyperclip.paste()
+            if not content or not content.strip():
+                return
+            content_hash = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+            if content_hash == self._last_hash:
+                return
+            self._last_hash = content_hash
+
+            conn = _get_fauxnix_conn()
+            cur = conn.cursor()
+            now = time.time()
+
+            source_app = ""
+            try:
+                fp = get_foreground_process()
+                if fp:
+                    source_app = fp.get("process_name", "")
+            except Exception:
+                pass
+
+            cur.execute(
+                """INSERT OR IGNORE INTO fennix_clipboard_snapshots
+                   (content, content_hash, mime_type, source_app, captured_ts)
+                   VALUES (?, ?, 'text/plain', ?, ?)""",
+                (content[:5000], content_hash, source_app, now),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+
+class OpenFilesTracker(BaseService):
+    name = "open_files_tracker"
+    interval = 10
+
+    def tick(self):
+        try:
+            proc = get_foreground_process()
+            if not proc:
+                return
+            pid = proc.get("pid")
+            if not pid:
+                return
+
+            open_files: list[str] = []
+            proc_fd = Path("/proc") / str(pid) / "fd"
+            if proc_fd.exists():
+                for entry in proc_fd.iterdir():
+                    try:
+                        target = entry.resolve()
+                        if target.is_file():
+                            open_files.append(str(target))
+                    except OSError:
+                        continue
+
+            if not open_files:
+                return
+
+            now = time.time()
+            conn = _get_fauxnix_conn()
+            cur = conn.cursor()
+            snapshot = json.dumps({
+                "pid": pid,
+                "process_name": proc.get("process_name", ""),
+                "open_files": open_files[:50],
+            })
+            cur.execute(
+                "INSERT INTO fennix_context_snapshots (snapshot_type, snapshot_data, captured_ts) VALUES (?, ?, ?)",
+                ("open_files", snapshot, now),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+
+class SystemStateLogger(BaseService):
+    name = "system_state_logger"
+    interval = 300
+
+    def tick(self):
+        if config.system_snapshot_interval <= 0:
+            return
+        try:
+            import psutil
+            now = time.time()
+
+            cpu = psutil.cpu_percent(interval=0.5)
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage("/")
+
+            processes: list[str] = []
+            for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+                try:
+                    info = proc.info
+                    if info["cpu_percent"] and info["cpu_percent"] > 1.0:
+                        processes.append(f"{info['name']}:cpu={info['cpu_percent']:.1f}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            snapshot = json.dumps({
+                "cpu_percent": cpu,
+                "mem_percent": mem.percent,
+                "mem_used_gb": round(mem.used / (1024**3), 2),
+                "mem_total_gb": round(mem.total / (1024**3), 2),
+                "disk_percent": disk.percent,
+                "disk_free_gb": round(disk.free / (1024**3), 2),
+                "top_processes": processes[:20],
+            })
+
+            conn = _get_fauxnix_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO fennix_context_snapshots (snapshot_type, snapshot_data, captured_ts) VALUES (?, ?, ?)",
+                ("system_state", snapshot, now),
+            )
+            conn.commit()
+            conn.close()
+
+            self._prune_old_snapshots()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    def _prune_old_snapshots(self):
+        try:
+            cutoff = time.time() - (86400 * 7)
+            conn = _get_fauxnix_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM fennix_context_snapshots WHERE captured_ts < ?",
+                (cutoff,),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+
+class AutoIngestionScanner(BaseService):
+    name = "auto_ingestion_scanner"
+    interval = 600
+
+    def tick(self):
+        if not config.auto_ingest:
+            return
+        for watch_dir in config.ingest_dirs:
+            if not watch_dir.exists():
+                continue
+            try:
+                self._scan_directory(watch_dir)
+            except Exception:
+                pass
+
+    def _scan_directory(self, directory: Path):
+        max_size = config.max_ingest_file_mb * 1024 * 1024
+        exclude = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache"}
+
+        for entry in directory.rglob("*"):
+            if entry.is_dir():
+                continue
+            if any(part in exclude for part in entry.parts):
+                continue
+            if not entry.is_file():
+                continue
+            if entry.suffix not in {
+                ".txt", ".md", ".py", ".js", ".ts", ".rs", ".go",
+                ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
+                ".sh", ".bash", ".zsh", ".fish",
+                ".html", ".css", ".scss",
+                ".csv", ".log",
+            }:
+                continue
+            try:
+                if entry.stat().st_size > max_size:
+                    continue
+            except OSError:
+                continue
+
+            try:
+                file_hash = self._hash_file(entry)
+            except OSError:
+                continue
+
+            if self._already_ingested(file_hash):
+                continue
+
+            try:
+                content = entry.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+
+            if len(content.strip()) < 20:
+                continue
+
+            from fennix.ingestion.pipeline import ingest_content
+            ingest_content(
+                file_path=str(entry),
+                file_hash=file_hash,
+                content=content,
+                source="auto",
+            )
+
+    def _hash_file(self, path: Path) -> str:
+        from fauxnix_tools.utils import sha256_file
+        return sha256_file(path)
+
+    def _already_ingested(self, file_hash: str) -> bool:
+        conn = _get_fauxnix_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM fennix_ingested_files WHERE file_hash = ?",
+            (file_hash,),
+        )
+        row = cur.fetchone()
+        conn.close()
+        return row is not None and row["c"] > 0
+
+
+class FileChangeReconciler(BaseService):
+    name = "file_change_reconciler"
+    interval = 120
+
+    def tick(self):
+        conn = _get_fauxnix_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, file_path, file_hash FROM fennix_ingested_files ORDER BY updated_ts DESC LIMIT 200"
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        for row in rows:
+            path = Path(row["file_path"])
+            if not path.exists():
+                continue
+            try:
+                new_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            if new_hash == row["file_hash"]:
+                continue
+
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+
+            from fennix.ingestion.pipeline import reingest_content
+            reingest_content(
+                ingested_file_id=row["id"],
+                file_path=str(path),
+                file_hash=new_hash,
+                content=content,
+            )
+
+
+class ServicesManager:
+    def __init__(self):
+        self._services: list[BaseService] = [
+            ClipboardContextWatcher(),
+            OpenFilesTracker(),
+            SystemStateLogger(),
+            AutoIngestionScanner(),
+            FileChangeReconciler(),
+        ]
+
+    def start(self):
+        for svc in self._services:
+            svc.start()
+
+    def stop(self):
+        for svc in self._services:
+            svc.stop()
+
+    def status(self) -> dict:
+        return {
+            "running": sum(1 for s in self._services if s._thread and s._thread.is_alive()),
+            "services": [s.name for s in self._services],
+        }
+
+    def get_service(self, name: str) -> BaseService | None:
+        for s in self._services:
+            if s.name == name:
+                return s
+        return None
+
+    def service_running(self, name: str) -> bool:
+        svc = self.get_service(name)
+        return bool(svc and svc._thread and svc._thread.is_alive())
+
+    def toggle_service(self, name: str, enabled: bool):
+        svc = self.get_service(name)
+        if not svc:
+            return
+        if enabled:
+            svc.start()
+        else:
+            svc.stop()
+
+
+def get_foreground_process() -> dict | None:
+    try:
+        from membrie.awareness.process import get_foreground_process as _membrie_fg
+        return _membrie_fg()
+    except ImportError:
+        pass
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowpid", "getwindowname"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split("\n")
+            if len(parts) >= 2:
+                pid = int(parts[0])
+                title = parts[1]
+                try:
+                    proc_path = Path("/proc") / str(pid) / "comm"
+                    proc_name = proc_path.read_text().strip() if proc_path.exists() else ""
+                except Exception:
+                    proc_name = ""
+                return {"pid": pid, "window_title": title, "process_name": proc_name}
+    except Exception:
+        pass
+    return None
