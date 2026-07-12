@@ -371,6 +371,12 @@ class ContextStreamService(BaseService):
             title = fg.get("window_title", "")
             if app_name:
                 self._streamer.on_window_change(app_name, title)
+        else:
+            from fennix.stream import stream_event
+            stream_event(
+                self._thread_name, "heartbeat",
+                {"status": "alive"},
+            )
 
 
 def _stream_system_heartbeat(streamer) -> None:

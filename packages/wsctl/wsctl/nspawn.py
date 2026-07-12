@@ -4,11 +4,13 @@ import subprocess
 from pathlib import Path
 
 
-def nspawn_boot(workspace_path: Path, shared_path: Path) -> subprocess.Popen:
+def nspawn_boot(workspace_path: Path, shared_path: Path, machine_name: str = "workspace") -> subprocess.Popen:
     return subprocess.Popen(
         [
             "sudo", "systemd-nspawn",
             f"--directory={workspace_path}",
+            f"--machine={machine_name}",
+            f"--setenv=FENNIX_THREAD_NAME={machine_name}",
             "--bind=/nix/store",
             f"--bind={shared_path}:/shared",
             "--bind=/run/nexus",

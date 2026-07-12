@@ -1,9 +1,16 @@
 { config, lib, pkgs, ... }:
 
+let
+  fennix-script = pkgs.writeShellScriptBin "fennix-start" ''
+    export PATH="${pkgs.python3}/bin:$PATH"
+    export PYTHONPATH="/fauxnix-core/packages/fennix:/fauxnix-core/packages/fauxnix-tools"
+    export FENNIX_AUTO_INGEST=false
+    exec ${pkgs.python3}/bin/python3 -m fennix
+  '';
+in
 {
   boot.isContainer = true;
 
-  networking.hostName = lib.mkDefault "workspace";
   networking.useDHCP = false;
 
   users.users.chxk = {
@@ -20,6 +27,19 @@
     settings.UseDns = false;
   };
 
+  systemd.services.fennix = {
+    description = "Fennix In-Thread Assistant";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${fennix-script}/bin/fennix-start";
+      Restart = "always";
+      RestartSec = 5;
+      PassEnvironment = "FENNIX_THREAD_NAME";
+    };
+  };
+
   environment.systemPackages = with pkgs; [
     git
     neovim
@@ -27,6 +47,7 @@
     htop
     btrfs-progs
     python3
+    python3.pkgs.psutil
   ];
 
   system.stateVersion = "26.05";
