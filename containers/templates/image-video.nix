@@ -1,12 +1,15 @@
-# Media / Design template
+# Image and video editing template
 { config, lib, pkgs, ... }:
 {
   environment.systemPackages = with pkgs; [
-    ffmpeg
     gimp
     inkscape
     blender
-    audacity
+    kdenlive
+    ffmpeg
     imagemagick
+    darktable
+    handbrake
+    obs-studio
   ];
 }

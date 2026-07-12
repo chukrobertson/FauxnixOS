@@ -15,7 +15,7 @@ from wsctl.nspawn import nspawn_boot, machinectl_poweroff, is_running, machinect
 from wsctl.git import init_repo, commit as git_commit, log as git_log, diff as git_diff, status as git_status
 
 
-def create_workspace(name: str, profile: str = "headless") -> dict:
+def create_workspace(name: str, profile: str = "headless", template: str | None = None) -> dict:
     ws_path = Path(WSCI_WORKSPACE_ROOT) / name
     if path_exists(ws_path):
         raise FileExistsError(f"Workspace '{name}' already exists")
@@ -24,6 +24,10 @@ def create_workspace(name: str, profile: str = "headless") -> dict:
 
     manifest = create_manifest(ws_path, name)
     manifest["nix"]["profile"] = profile
+
+    if template:
+        manifest["nix"]["template"] = template
+        manifest["tags"]["topics"] = [template]
 
     commit_hash = init_repo(ws_path, name, manifest["workspace"]["id"])
     manifest["git"] = {

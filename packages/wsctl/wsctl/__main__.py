@@ -18,9 +18,11 @@ from wsctl.operations import (
 
 def _cmd_create(args: argparse.Namespace) -> None:
     try:
-        manifest = create_workspace(args.name, profile=args.profile)
+        manifest = create_workspace(args.name, profile=args.profile, template=args.template)
         print(f"Created workspace '{args.name}' (id={manifest['workspace']['id']})")
         print(f"Profile: {args.profile}")
+        if args.template:
+            print(f"Template: {args.template}")
         print(f"Start with: wsctl start {args.name}")
     except FileExistsError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -213,6 +215,36 @@ def _cmd_diff(args: argparse.Namespace) -> None:
         print("No differences")
 
 
+def _cmd_ask(args: argparse.Namespace) -> None:
+    from wsctl.templates import match_template, template_description
+    from wsctl.operations import create_workspace
+
+    query = " ".join(args.query)
+    template = match_template(query)
+    desc = template_description(template)
+    thread_name = args.name or template + "-" + _short_id()
+
+    if args.dry_run:
+        print(f"Query: {query}")
+        print(f"Matched: {template} — {desc}")
+        print(f"Would create: {thread_name}")
+        return
+
+    try:
+        manifest = create_workspace(thread_name, profile="headless", template=template)
+        print(f"Created thread '{thread_name}' (id={manifest['workspace']['id']})")
+        print(f"Template: {template} — {desc}")
+        print(f"Start with: wsctl start {thread_name}")
+    except FileExistsError:
+        print(f"Error: Thread '{thread_name}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+
+def _short_id() -> str:
+    import uuid
+    return uuid.uuid4().hex[:6]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="wsctl",
@@ -223,6 +255,7 @@ def main() -> None:
     p_create = sub.add_parser("create", help="Create a new workspace")
     p_create.add_argument("name", help="Workspace name")
     p_create.add_argument("--profile", choices=["win11", "macos", "headless"], default="headless")
+    p_create.add_argument("--template", "-t", help="Template name (coding, research, ml-python, audio, gaming, etc.)")
     p_create.set_defaults(func=_cmd_create)
 
     p_start = sub.add_parser("start", help="Start a workspace")
@@ -284,6 +317,12 @@ def main() -> None:
     p_diff.add_argument("a", help="First workspace")
     p_diff.add_argument("b", help="Second workspace")
     p_diff.set_defaults(func=_cmd_diff)
+
+    p_ask = sub.add_parser("ask", help="Create a thread from a natural language description")
+    p_ask.add_argument("query", nargs="+", help="What kind of thread do you need?")
+    p_ask.add_argument("--name", "-n", help="Thread name (auto-generated if not set)")
+    p_ask.add_argument("--dry-run", action="store_true", help="Show what would be created")
+    p_ask.set_defaults(func=_cmd_ask)
 
     args = parser.parse_args()
     args.func(args)
