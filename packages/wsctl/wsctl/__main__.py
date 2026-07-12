@@ -19,7 +19,7 @@ from wsctl.operations import (
 def _cmd_create(args: argparse.Namespace) -> None:
     try:
         manifest = create_workspace(args.name, profile=args.profile, template=args.template)
-        print(f"Created workspace '{args.name}' (id={manifest['workspace']['id']})")
+        print(f"Created thread '{args.name}' (id={manifest['workspace']['id']})")
         print(f"Profile: {args.profile}")
         if args.template:
             print(f"Template: {args.template}")
@@ -32,7 +32,7 @@ def _cmd_create(args: argparse.Namespace) -> None:
 def _cmd_start(args: argparse.Namespace) -> None:
     try:
         start_workspace(args.name)
-        print(f"Workspace '{args.name}' started")
+        print(f"Thread '{args.name}' started")
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -41,7 +41,7 @@ def _cmd_start(args: argparse.Namespace) -> None:
 def _cmd_stop(args: argparse.Namespace) -> None:
     try:
         stop_workspace(args.name)
-        print(f"Workspace '{args.name}' stopped")
+        print(f"Thread '{args.name}' stopped")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -65,9 +65,9 @@ def _cmd_merge(args: argparse.Namespace) -> None:
         print(f"  Snapshots: {summary['snapshots_created'][0]}")
         print(f"  Snapshots: {summary['snapshots_created'][1]}")
         if args.prune:
-            print(f"  Source pruned: {args.source}")
+            print(f"  Thread '{args.source}' pruned")
         else:
-            print(f"  Source archived (use --prune to delete)")
+            print(f"  Thread '{args.source}' archived (use --prune to delete)")
     except (FileNotFoundError, FileExistsError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -126,7 +126,7 @@ def _cmd_snapshots_prune(args: argparse.Namespace) -> None:
 def _cmd_restore(args: argparse.Namespace) -> None:
     try:
         restore_workspace(args.name, args.snapshot)
-        print(f"Workspace '{args.name}' restored from snapshot '{args.snapshot}'")
+        print(f"Thread '{args.name}' restored from snapshot '{args.snapshot}'")
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -135,7 +135,7 @@ def _cmd_restore(args: argparse.Namespace) -> None:
 def _cmd_delete(args: argparse.Namespace) -> None:
     try:
         delete_workspace(args.name)
-        print(f"Workspace '{args.name}' deleted")
+        print(f"Thread '{args.name}' deleted")
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -144,7 +144,7 @@ def _cmd_delete(args: argparse.Namespace) -> None:
 def _cmd_list(args: argparse.Namespace) -> None:
     workspaces = list_workspaces()
     if not workspaces:
-        print("No workspaces found")
+        print("No threads found")
         return
 
     header = f"{'NAME':<20} {'STATUS':<10} {'PROFILE':<10} {'TOPICS':<20} {'PARENT':<12}"
@@ -204,7 +204,7 @@ def _cmd_log(args: argparse.Namespace) -> None:
 
     ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
     if not ws_path.exists():
-        print(f"Error: Workspace '{args.name}' not found", file=sys.stderr)
+        print(f"Error: Thread '{args.name}' not found", file=sys.stderr)
         sys.exit(1)
 
     entries = git_log(ws_path, n=args.n)
@@ -224,7 +224,7 @@ def _cmd_commit(args: argparse.Namespace) -> None:
 
     ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
     if not ws_path.exists():
-        print(f"Error: Workspace '{args.name}' not found", file=sys.stderr)
+        print(f"Error: Thread '{args.name}' not found", file=sys.stderr)
         sys.exit(1)
 
     st = git_status(ws_path)
@@ -250,10 +250,10 @@ def _cmd_diff(args: argparse.Namespace) -> None:
     ws_a = Path(WSCI_WORKSPACE_ROOT) / args.a
     ws_b = Path(WSCI_WORKSPACE_ROOT) / args.b
     if not ws_a.exists():
-        print(f"Error: Workspace '{args.a}' not found", file=sys.stderr)
+        print(f"Error: Thread '{args.a}' not found", file=sys.stderr)
         sys.exit(1)
     if not ws_b.exists():
-        print(f"Error: Workspace '{args.b}' not found", file=sys.stderr)
+        print(f"Error: Thread '{args.b}' not found", file=sys.stderr)
         sys.exit(1)
 
     output = git_diff(ws_a, ws_b)
@@ -335,10 +335,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
     from wsctl.operations import list_workspaces
     from wsctl.manifest import load_manifest
     from wsctl.git import log as git_log
-    import subprocess
+    from wsctl.btrfs import path_exists
 
     ws_path = Path(WSCI_WORKSPACE_ROOT) / args.name
-    if not ws_path.exists():
+    if not path_exists(ws_path):
         print(f"Error: Thread '{args.name}' not found", file=sys.stderr)
         sys.exit(1)
 
@@ -615,32 +615,32 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_create = sub.add_parser("create", help="Create a new workspace")
+    p_create = sub.add_parser("create", help="Create a new thread")
     p_create.add_argument("name", help="Workspace name")
     p_create.add_argument("--profile", choices=["win11", "macos", "headless"], default="headless")
     p_create.add_argument("--template", "-t", help="Template name (coding, research, ml-python, audio, gaming, etc.)")
     p_create.set_defaults(func=_cmd_create)
 
-    p_start = sub.add_parser("start", help="Start a workspace")
+    p_start = sub.add_parser("start", help="Start a thread")
     p_start.add_argument("name", help="Workspace name")
     p_start.set_defaults(func=_cmd_start)
 
-    p_stop = sub.add_parser("stop", help="Stop a workspace")
+    p_stop = sub.add_parser("stop", help="Stop a thread")
     p_stop.add_argument("name", help="Workspace name")
     p_stop.set_defaults(func=_cmd_stop)
 
-    p_fork = sub.add_parser("fork", help="Fork a new workspace from an existing one")
+    p_fork = sub.add_parser("fork", help="Fork a new thread from an existing one")
     p_fork.add_argument("source", help="Source workspace name")
     p_fork.add_argument("target", help="Target workspace name")
     p_fork.set_defaults(func=_cmd_fork)
 
-    p_merge = sub.add_parser("merge", help="Merge a workspace into another")
+    p_merge = sub.add_parser("merge", help="Merge a thread into another")
     p_merge.add_argument("source", help="Source workspace to merge from")
     p_merge.add_argument("target", help="Target workspace to merge into")
     p_merge.add_argument("--prune", action="store_true", help="Delete source after merge")
     p_merge.set_defaults(func=_cmd_merge)
 
-    p_snap = sub.add_parser("snapshot", help="Snapshot a workspace")
+    p_snap = sub.add_parser("snapshot", help="Snapshot a thread")
     p_snap.add_argument("name", help="Workspace name")
     p_snap.add_argument("--label", "-l", help="Snapshot label")
     p_snap.set_defaults(func=_cmd_snapshot)
@@ -653,16 +653,16 @@ def main() -> None:
     snaps_prune.add_argument("--dry-run", action="store_true", help="Show what would be deleted")
     snaps_prune.set_defaults(func=_cmd_snapshots_prune)
 
-    p_restore = sub.add_parser("restore", help="Restore a workspace from a snapshot")
+    p_restore = sub.add_parser("restore", help="Restore a thread from a snapshot")
     p_restore.add_argument("name", help="Workspace name")
     p_restore.add_argument("snapshot", help="Snapshot name")
     p_restore.set_defaults(func=_cmd_restore)
 
-    p_delete = sub.add_parser("delete", help="Delete a workspace")
+    p_delete = sub.add_parser("delete", help="Delete a thread")
     p_delete.add_argument("name", help="Workspace name")
     p_delete.set_defaults(func=_cmd_delete)
 
-    p_list = sub.add_parser("list", help="List all workspaces")
+    p_list = sub.add_parser("list", help="List all threads")
     p_list.set_defaults(func=_cmd_list)
 
     p_setup = sub.add_parser("setup", help="First-run setup wizard")

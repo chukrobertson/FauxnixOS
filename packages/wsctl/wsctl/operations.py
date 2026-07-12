@@ -18,7 +18,7 @@ from wsctl.git import init_repo, commit as git_commit, log as git_log, diff as g
 def create_workspace(name: str, profile: str = "headless", template: str | None = None) -> dict:
     ws_path = Path(WSCI_WORKSPACE_ROOT) / name
     if path_exists(ws_path):
-        raise FileExistsError(f"Workspace '{name}' already exists")
+        raise FileExistsError(f"Thread '{name}' already exists")
 
     _init_from_template(ws_path)
 
@@ -65,7 +65,7 @@ def _fix_os_release(ws_path: Path) -> None:
 def start_workspace(name: str) -> None:
     ws_path = Path(WSCI_WORKSPACE_ROOT) / name
     if not path_exists(ws_path):
-        raise FileNotFoundError(f"Workspace '{name}' not found")
+        raise FileNotFoundError(f"Thread '{name}' not found")
 
     if is_running(name):
         return
@@ -94,6 +94,9 @@ def start_workspace(name: str) -> None:
 
 
 def stop_workspace(name: str) -> None:
+    ws_path = Path(WSCI_WORKSPACE_ROOT) / name
+    if not path_exists(ws_path):
+        return
     if not is_running(name):
         return
     machinectl_poweroff(name)
@@ -107,9 +110,9 @@ def fork_workspace(source_name: str, target_name: str) -> dict:
     target_path = Path(WSCI_WORKSPACE_ROOT) / target_name
 
     if not path_exists(source_path):
-        raise FileNotFoundError(f"Source workspace '{source_name}' not found")
+        raise FileNotFoundError(f"Thread '{source_name}' not found")
     if path_exists(target_path):
-        raise FileExistsError(f"Target workspace '{target_name}' already exists")
+        raise FileExistsError(f"Thread '{target_name}' already exists")
 
     source_manifest = load_manifest(source_path)
     source_id = source_manifest["workspace"]["id"] if source_manifest else None
@@ -129,7 +132,7 @@ def fork_workspace(source_name: str, target_name: str) -> dict:
 def snapshot_workspace(name: str, label: str | None = None) -> str:
     ws_path = Path(WSCI_WORKSPACE_ROOT) / name
     if not path_exists(ws_path):
-        raise FileNotFoundError(f"Workspace '{name}' not found")
+        raise FileNotFoundError(f"Thread '{name}' not found")
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     snap_label = label or f"auto-{ts}"
@@ -169,7 +172,7 @@ def restore_workspace(name: str, snapshot_label: str) -> None:
 def delete_workspace(name: str) -> None:
     ws_path = Path(WSCI_WORKSPACE_ROOT) / name
     if not path_exists(ws_path):
-        raise FileNotFoundError(f"Workspace '{name}' not found")
+        raise FileNotFoundError(f"Thread '{name}' not found")
 
     if is_running(name):
         stop_workspace(name)
@@ -218,9 +221,9 @@ def merge_workspace(source_name: str, target_name: str, prune: bool = False) -> 
     target_path = Path(WSCI_WORKSPACE_ROOT) / target_name
 
     if not path_exists(source_path):
-        raise FileNotFoundError(f"Source workspace '{source_name}' not found")
+        raise FileNotFoundError(f"Thread '{source_name}' not found")
     if not path_exists(target_path):
-        raise FileNotFoundError(f"Target workspace '{target_name}' not found")
+        raise FileNotFoundError(f"Thread '{target_name}' not found")
 
     source_manifest = load_manifest(source_path)
     target_manifest = load_manifest(target_path)
