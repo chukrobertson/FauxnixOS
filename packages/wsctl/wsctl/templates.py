@@ -73,11 +73,6 @@ def template_description(template_name: str) -> str:
 
 
 def match_template_llm(query: str) -> str | None:
-    try:
-        from fauxnix_tools.llm import chat_messages
-    except ImportError:
-        return None
-
     template_list = "\n".join(
         f"- {name}: {desc}"
         for name, desc in [
@@ -87,7 +82,7 @@ def match_template_llm(query: str) -> str | None:
             ("web-dev", "Web development — Node.js, TypeScript, VS Code"),
             ("writing", "Writing — Pandoc, Zathura, LaTeX, spellcheck"),
             ("documents", "Documents — LibreOffice, Pandoc, LaTeX, PDF, publishing"),
-            ("research", "Research — Firefox, Obsidian, Zotero, notes, clipboard"),
+            ("research", "Research — Chrome, Firefox, Obsidian, Zotero, notes, clipboard"),
             ("audio", "Audio — Ardour, Audacity, LMMS, FFmpeg, music production"),
             ("image-video", "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS"),
             ("gaming", "Gaming — Steam, Lutris, Wine, GameMode, MangoHud"),
@@ -103,17 +98,27 @@ def match_template_llm(query: str) -> str | None:
     )
 
     try:
-        response = chat_messages(
-            messages=[{"role": "user", "content": prompt}],
-            task="summary",
+        import json, urllib.request
+        data = json.dumps({
+            "model": "qwen2.5:1.5b",
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            "http://localhost:11434/api/chat",
+            data=data, method="POST",
         )
-        result = response.get("message", {}).get("content", "").strip().lower()
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            content = result.get("message", {}).get("content", "").strip().lower()
+
         valid = {
             "ml-python", "coding", "rust-dev", "web-dev", "writing",
             "documents", "research", "audio", "image-video", "gaming",
         }
-        if result in valid:
-            return result
+        if content in valid:
+            return content
     except Exception:
         pass
 

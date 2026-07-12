@@ -498,7 +498,15 @@ class BrowserActivityWatcher(BaseService):
     name = "browser_watcher"
     interval = 10
 
-    BROWSER_APPS = {"firefox", "chromium", "chrome", "brave", "vivaldi", "edge", "opera"}
+    BROWSER_APPS = {
+        "firefox", "chromium", "chrome", "google-chrome",
+        "brave", "vivaldi", "edge", "opera", "microsoft-edge",
+    }
+
+    BROWSER_SUFFIXES = [
+        "google chrome", "mozilla firefox", "chromium",
+        "brave", "vivaldi", "opera", "microsoft edge",
+    ]
 
     def __init__(self, thread_name: str = "workspace"):
         super().__init__()
@@ -516,21 +524,40 @@ class BrowserActivityWatcher(BaseService):
         if not is_browser:
             return
 
-        domain = self._extract_domain(title)
+        domain = self._extract_domain(title, proc_name)
         if domain:
             stream_browser_event(self._thread_name, domain, title)
 
-    def _extract_domain(self, title: str) -> str:
-        for sep in [" — ", " - ", " | ", " :: "]:
-            if sep in title:
-                parts = title.rsplit(sep, 1)
-                candidate = parts[-1].strip()
-                if candidate and len(candidate) < 100:
-                    title = parts[0].strip()
-                    if any(b in candidate.lower() for b in self.BROWSER_APPS):
-                        return title[:80]
-                    return candidate[:80]
-        return title.split(" - ")[0][:80] if " - " in title else title[:80]
+    def _extract_domain(self, title: str, proc_name: str) -> str:
+        lower_title = title.lower()
+        lower_proc = proc_name.lower()
+
+        for suffix in self.BROWSER_SUFFIXES:
+            suffix_pos = lower_title.rfind(f" - {suffix}")
+            if suffix_pos < 0:
+                suffix_pos = lower_title.rfind(f" — {suffix}")
+            if suffix_pos < 0:
+                suffix_pos = lower_title.rfind(f" | {suffix}")
+            if suffix_pos >= 0:
+                result = title[:suffix_pos].strip()
+                if result:
+                    return result[:80]
+
+        if " - " in title:
+            parts = title.rsplit(" - ", 1)
+            candidate = parts[-1].strip()
+            if any(b in candidate.lower() for b in self.BROWSER_APPS):
+                return parts[0].strip()[:80]
+            if len(candidate) < 60:
+                return parts[0].strip()[:80]
+
+        if " — " in title:
+            parts = title.rsplit(" — ", 1)
+            candidate = parts[-1].strip()
+            if any(b in candidate.lower() for b in self.BROWSER_APPS):
+                return parts[0].strip()[:80]
+
+        return title[:80]
 
     def service_running(self, name: str) -> bool:
         svc = self.get_service(name)
