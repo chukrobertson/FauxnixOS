@@ -321,6 +321,9 @@ class ServicesManager:
             AutoIngestionScanner(),
             FileChangeReconciler(),
             ContextStreamService(thread_name),
+            GitActivityWatcher(thread_name),
+            TerminalHistoryWatcher(thread_name),
+            BrowserActivityWatcher(thread_name),
         ]
 
     def start(self):
@@ -341,7 +344,7 @@ class ServicesManager:
         for s in self._services:
             if s.name == name:
                 return s
-    return None
+        return None
 
 
 class ContextStreamService(BaseService):
@@ -382,6 +385,144 @@ def _stream_system_heartbeat(streamer) -> None:
         )
     except Exception:
         pass
+
+
+class GitActivityWatcher(BaseService):
+    name = "git_watcher"
+    interval = 15
+
+    def __init__(self, thread_name: str = "workspace"):
+        super().__init__()
+        self._thread_name = thread_name
+        self._last_heads: dict[str, str] = {}
+
+    def tick(self):
+        from fennix.stream import stream_git_event
+        for repo_path in self._find_repos():
+            try:
+                head_path = repo_path / ".git" / "HEAD"
+                if not head_path.exists():
+                    continue
+                ref = head_path.read_text().strip()
+                if ref.startswith("ref: "):
+                    branch = ref[5:].split("/")[-1]
+                    branch_ref = repo_path / ".git" / ref[5:]
+                    if branch_ref.exists():
+                        ref = branch_ref.read_text().strip()
+                else:
+                    branch = "HEAD"
+
+                cache_key = str(repo_path)
+                if self._last_heads.get(cache_key) != ref:
+                    self._last_heads[cache_key] = ref
+                    msg = self._last_commit_message(repo_path)
+                    stream_git_event(
+                        self._thread_name,
+                        str(repo_path), branch, msg, "commit",
+                    )
+            except Exception:
+                pass
+
+    def _find_repos(self) -> list[Path]:
+        repos: list[Path] = []
+        for base in [Path("/shared"), Path("/home/chxk")]:
+            if not base.exists():
+                continue
+            for git_dir in base.rglob(".git"):
+                if git_dir.is_dir():
+                    repos.append(git_dir.parent)
+                    if len(repos) >= 20:
+                        return repos
+        return repos
+
+    def _last_commit_message(self, repo_path: Path) -> str:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "-C", str(repo_path), "log", "-1", "--format=%s"],
+                capture_output=True, text=True, timeout=3,
+            )
+            return result.stdout.strip()[:100] if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+
+class TerminalHistoryWatcher(BaseService):
+    name = "terminal_watcher"
+    interval = 10
+
+    def __init__(self, thread_name: str = "workspace"):
+        super().__init__()
+        self._thread_name = thread_name
+        self._last_sizes: dict[Path, int] = {}
+
+    def tick(self):
+        from fennix.stream import stream_terminal_event
+        history_files = [
+            Path.home() / ".bash_history",
+            Path.home() / ".zsh_history",
+            Path.home() / ".local/share/fish/fish_history",
+        ]
+        for hf in history_files:
+            if not hf.exists():
+                continue
+            try:
+                size = hf.stat().st_size
+                last = self._last_sizes.get(hf, 0)
+                if size > last:
+                    with open(hf, "rb") as f:
+                        f.seek(max(0, size - 2048))
+                        tail = f.read().decode("utf-8", errors="replace")
+                    lines = tail.strip().split("\n")
+                    new_cmds = lines[-3:] if len(lines) > max(0, (size - last) // 50) else []
+                    for cmd in new_cmds:
+                        cmd = cmd.strip()
+                        if cmd and not cmd.startswith("#"):
+                            stream_terminal_event(
+                                self._thread_name, cmd, str(Path.cwd()),
+                            )
+                    self._last_sizes[hf] = size
+            except Exception:
+                pass
+
+
+class BrowserActivityWatcher(BaseService):
+    name = "browser_watcher"
+    interval = 10
+
+    BROWSER_APPS = {"firefox", "chromium", "chrome", "brave", "vivaldi", "edge", "opera"}
+
+    def __init__(self, thread_name: str = "workspace"):
+        super().__init__()
+        self._thread_name = thread_name
+
+    def tick(self):
+        from fennix.stream import stream_browser_event
+        fg = get_foreground_process()
+        if not fg:
+            return
+        proc_name = fg.get("process_name", "").lower()
+        title = fg.get("window_title", "")
+
+        is_browser = any(b in proc_name for b in self.BROWSER_APPS)
+        if not is_browser:
+            return
+
+        domain = self._extract_domain(title)
+        if domain:
+            stream_browser_event(self._thread_name, domain, title)
+
+    def _extract_domain(self, title: str) -> str:
+        for sep in [" — ", " - ", " | ", " :: "]:
+            if sep in title:
+                parts = title.rsplit(sep, 1)
+                candidate = parts[-1].strip()
+                if candidate and len(candidate) < 100:
+                    title = parts[0].strip()
+                    if any(b in candidate.lower() for b in self.BROWSER_APPS):
+                        return title[:80]
+                    return candidate[:80]
+        return title.split(" - ")[0][:80] if " - " in title else title[:80]
 
     def service_running(self, name: str) -> bool:
         svc = self.get_service(name)

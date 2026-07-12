@@ -67,7 +67,8 @@ class FennixTray:
         self._status_actions: dict[str, QAction] = {}
         for svc_name in ["clipboard_watcher", "open_files_tracker",
                           "system_state_logger", "auto_ingestion_scanner",
-                          "file_change_reconciler", "context_streamer"]:
+                          "file_change_reconciler", "context_streamer",
+                          "git_watcher", "terminal_watcher", "browser_watcher"]:
             action = status_menu.addAction(svc_name.replace("_", " ").title())
             action.setCheckable(True)
             action.triggered.connect(lambda checked, n=svc_name: self._services.toggle_service(n, checked))

@@ -230,3 +230,17 @@ def _queue_suggestion(suggestion_type: str, thread_name: str, data: dict) -> Non
     )
     conn.commit()
     conn.close()
+
+    _notify(titles.get(suggestion_type, suggestion_type), bodies.get(suggestion_type, ""))
+
+
+def _notify(title: str, body: str) -> None:
+    try:
+        import subprocess
+        subprocess.run(
+            ["notify-send", "-a", "Nexus", "-i", "dialog-information",
+             title, body, "--hint=int:transient:1"],
+            capture_output=True, timeout=3,
+        )
+    except Exception:
+        pass
