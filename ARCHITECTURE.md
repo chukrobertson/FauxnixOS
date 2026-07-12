@@ -4,25 +4,28 @@
 
 FauxnixOS is a NixOS-based operating system built around containerized **threads of continuity** — isolated workspaces that can be forked, merged, snapshotted, and restored. Two AI assistants operate at different layers, sharing a common ML pipeline.
 
+The base system runs GNOME with a Fennix extension. All user work happens inside threads. Threads are graphical (wayvnc VNC on ports 5901-5920) or headless (SSH).
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    FAUXNIX OS                                     │
 │                                                                   │
 │  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                 NEXUS (Host-Level Daemon)                     │ │
-│  │  "The orchestrator and guardian of the base system"          │ │
-│  │                                                               │ │
-│  │  • Thread lifecycle management (create, fork, merge, snap)   │ │
-│  │  • Cross-thread ML pipeline (embeddings, clustering, drift)  │ │
-│  │  • Security audit and intrusion detection (future)           │ │
-│  │  • Ollama coordination (one LLM server, all threads)         │ │
-│  │  • fs orchestration: btrfs subvolumes, snapshots, shared dir │ │
-│  └────────────────────────┬────────────────────────────────────┘ │
-│                           │                                       │
-│  ┌────────────────────────┼────────────────────────────────────┐ │
-│  │              IMMUTABLE NIXOS BASE                            │ │
-│  │  Read-only /nix/store, tmpfs root overlay, btrfs root       │ │
-│  │  systemd-nspawn, snapper, ollama.service, nexus.service      │ │
+│  │              GNOME DESKTOP (immutable base)                  │ │
+│  │  [Fennix ext] Activities 🔍 | Calendar ⏰ | Threads 🔲 3     │ │
+│  │  ┌───────────────────────────────────────────────────────┐  │ │
+│  │  │              NEXUS (Host Daemon)                       │  │ │
+│  │  │  "The orchestrator and guardian of the base system"   │  │ │
+│  │  │                                                        │  │ │
+│  │  │  • Thread lifecycle (create, fork, merge, snap)       │  │ │
+│  │  │  • Cross-thread ML pipeline (embed, cluster, drift)   │  │ │
+│  │  │  • Ollama coordination (one LLM server, all threads)  │  │ │
+│  │  │  • btrfs orchestration (subvolumes, snapshots)        │  │ │
+│  │  └────────────────────┬──────────────────────────────────┘  │ │
+│  │                       │                                      │ │
+│  │         IMMUTABLE NIXOS BASE                                 │ │
+│  │         Read-only /nix/store, tmpfs root overlay            │ │
+│  │         nspawn · ollama · ssh · gdm                         │ │
 │  └────────────────────────┼────────────────────────────────────┘ │
 │                           │                                       │
 │         ┌─────────────────┼─────────────────┐                    │
@@ -31,21 +34,12 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
 │  │  Thread A    │   │  Thread B    │   │  Thread C    │           │
 │  │  (nspawn)    │   │  (nspawn)    │   │  (nspawn)    │           │
 │  │              │   │              │   │              │           │
-│  │ ┌──────────┐ │   │ ┌──────────┐ │   │ ┌──────────┐ │           │
-│  │ │  FENNIX   │ │   │ │  FENNIX   │ │   │ │  FENNIX   │ │           │
-│  │ │ in-thread │ │   │ │ in-thread │ │   │ │ in-thread │ │           │
-│  │ │ assistant │ │   │ │ assistant │ │   │ │ assistant │ │           │
-│  │ └─────┬────┘ │   │ └─────┬────┘ │   │ └─────┬────┘ │           │
-│  │       │      │   │       │      │   │       │      │           │
-│  │ ┌─────▼────┐ │   │ ┌─────▼────┐ │   │ ┌─────▼────┐ │           │
-│  │ │ARCHIVIST │ │   │ │ARCHIVIST │ │   │ │ARCHIVIST │ │           │
-│  │ │file mgr  │ │   │ │file mgr  │ │   │ │file mgr  │ │           │
-│  │ │OCR/ML    │ │   │ │OCR/ML    │ │   │ │OCR/ML    │ │           │
-│  │ └─────┬────┘ │   │ └─────┬────┘ │   │ └─────┬────┘ │           │
-│  │       │      │   │       │      │   │       │      │           │
-│  │  context ────┼───┼───────┼──────┼───┼───context    │           │
-│  │  + ML meta   │   │       │      │   │  + ML meta   │           │
-│  └──────┬───────┘   └───────┼──────┘   └──────────────┘           │
+│  │ win11 feel   │   │ macos feel   │   │ headless     │           │
+│  │ FENNIX       │   │ FENNIX       │   │ FENNIX       │           │
+│  │ ARCHIVIST    │   │ ARCHIVIST    │   │ ARCHIVIST    │           │
+│  │ wayvnc       │   │ wayvnc       │   │              │           │
+│  │ VNC:5901     │   │ VNC:5902     │   │ SSH:22       │           │
+│  └──────┬───────┘   └───────┬──────┘   └──────────────┘           │
 │         │                   │                                      │
 │         └───────────────────┘                                      │
 │                   │                                                │
@@ -56,7 +50,6 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
 │         │ • Embedding model  │                                      │
 │         │ • Topic clustering │                                      │
 │         │ • Drift detection  │                                      │
-│         │ • Thread similarity│                                      │
 │         │ • Suggestion engine│                                      │
 │         └─────────┬─────────┘                                      │
 │                   │                                                │
@@ -187,6 +180,23 @@ FauxnixOS is a NixOS-based operating system built around containerized **threads
   - Archivist (in-thread) → enriches files with ML metadata → feeds results to **Fennix**
   - Archivist (base) → enriches shared files with ML metadata → feeds results to **Nexus**
   - Both paths feed into the ML pipeline for cross-thread awareness
+
+### Thread Access
+- **Local:** `wsctl attach <name>` for shell, `waypipe ssh <name>.local` for GUI
+- **Remote (VNC):** Graphical threads get wayvnc server on dynamic ports (5901-5920)
+- **Port assignment:** Stored in manifest `network.vnc_port` at thread start
+- **Firewall:** Immutable base opens ports 5900-5920
+
+### Vision Models
+- **Face detection:** OpenCV Haar cascades (0MB, CPU, Nix store). 2 faces detected on test photo.
+- **Object detection:** llava-phi3:3.8b (2.9GB) via Ollama. moondream:1.8b (1.7GB) fallback.
+- **Embeddings:** nomic-embed-text (274MB, 768-dim) for thread clustering.
+- **LLM ask:** qwen2.5:1.5b (986MB) for natural language template matching.
+
+### GNOME Base + Extension
+- **Desktop:** GNOME Shell with GDM, pipewire audio, Fauxnix wallpaper/lockscreen
+- **Fennix extension:** Top bar thread indicator, quick-create templates, running thread list
+- **Optional:** `enableDesktop = false` for headless/SSH-only deployment
 
 ### Membrie — Superseded
 - **What was:** App-level session tracker and memory companion
