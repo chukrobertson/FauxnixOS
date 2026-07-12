@@ -5,7 +5,7 @@ import sys
 import time
 
 from nexus.db import init_db, event_counts
-from nexus.engine import ContextAggregator, ThreadSupervisor, PipelineRunner
+from nexus.engine import ContextAggregator, ThreadSupervisor, PipelineRunner, SnapshotService
 from nexus.services import ServicesManager
 
 
@@ -17,6 +17,7 @@ def main() -> None:
     manager.add(aggregator)
     manager.add(ThreadSupervisor())
     manager.add(PipelineRunner())
+    manager.add(SnapshotService())
 
     manager.start_all()
     print(f"[nexus] listening on /run/nexus/")

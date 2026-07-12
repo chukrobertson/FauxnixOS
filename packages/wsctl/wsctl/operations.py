@@ -72,6 +72,8 @@ def start_workspace(name: str) -> None:
 
     _fix_os_release(ws_path)
 
+    snapshot_workspace(name, f"pre-boot")
+
     shared_path = Path(WSCI_SHARED_ROOT)
     ensure_directory(shared_path)
 
@@ -94,6 +96,8 @@ def stop_workspace(name: str) -> None:
     if not is_running(name):
         return
     machinectl_poweroff(name)
+    time.sleep(2)
+    snapshot_workspace(name, f"post-stop")
 
 
 def fork_workspace(source_name: str, target_name: str) -> dict:
@@ -168,6 +172,8 @@ def delete_workspace(name: str) -> None:
     if is_running(name):
         stop_workspace(name)
         time.sleep(2)
+
+    snapshot_workspace(name, f"pre-delete")
 
     btrfs_delete(ws_path)
 

@@ -182,6 +182,30 @@ class PipelineRunner(BaseService):
                 })
 
 
+class SnapshotService(BaseService):
+    name = "snapshot_service"
+    interval_s = 3600
+
+    def tick(self) -> None:
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["sudo", "machinectl", "list", "--no-legend"],
+                capture_output=True, text=True,
+            )
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                name = line.split()[0]
+                subprocess.run(
+                    ["sudo", "/home/chxk/.local/bin/wsctl", "snapshot",
+                     name, "--label", "auto-hourly"],
+                    capture_output=True,
+                )
+        except Exception:
+            pass
+
+
 def _queue_suggestion(suggestion_type: str, thread_name: str, data: dict) -> None:
     from nexus.db import get_conn
 
