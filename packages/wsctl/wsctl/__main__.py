@@ -280,6 +280,97 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
     run_dashboard(refresh=args.refresh)
 
 
+def _cmd_clip_copy(args: argparse.Namespace) -> None:
+    import subprocess
+    import socket
+    from pathlib import Path
+
+    content = args.text or _get_clipboard()
+    if not content:
+        print("Clipboard is empty — use --text to specify content directly")
+        return
+    clip_dir = Path("/var/lib/workspaces-shared/.clipboard")
+    subprocess.run(["sudo", "mkdir", "-p", str(clip_dir)], check=True)
+    hostname = socket.gethostname()
+    clip_file = clip_dir / f"{hostname}.txt"
+    subprocess.run(["sudo", "tee", str(clip_file)], input=content, text=True, capture_output=True)
+    print(f"Copied {len(content)} chars to shared clipboard → {hostname}.txt")
+
+
+def _cmd_clip_paste(args: argparse.Namespace) -> None:
+    import subprocess
+    from pathlib import Path
+    clip_dir = Path("/var/lib/workspaces-shared/.clipboard")
+    if not clip_dir.exists():
+        print("No shared clipboard directory")
+        return
+    result = subprocess.run(["sudo", "find", str(clip_dir), "-name", "*.txt", "-type", "f"],
+                            capture_output=True, text=True)
+    files = [Path(f) for f in result.stdout.strip().split("\n") if f]
+    if not files:
+        print("No clips found")
+        return
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    latest = files[0]
+    result = subprocess.run(["sudo", "cat", str(latest)], capture_output=True, text=True)
+    content = result.stdout
+    _set_clipboard(content)
+    print(f"Pasted {len(content)} chars from {latest.name} into clipboard")
+
+
+def _cmd_clip_list(args: argparse.Namespace) -> None:
+    import subprocess
+    from pathlib import Path
+    from datetime import datetime
+    clip_dir = Path("/var/lib/workspaces-shared/.clipboard")
+    if not clip_dir.exists():
+        print("No shared clipboard directory")
+        return
+    result = subprocess.run(["sudo", "find", str(clip_dir), "-name", "*.txt", "-type", "f"],
+                            capture_output=True, text=True)
+    files = [Path(f) for f in result.stdout.strip().split("\n") if f]
+    if not files:
+        print("No clips found")
+        return
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in files:
+        size = f.stat().st_size
+        try:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            print(f"  {f.stem:<20} {size:>6}B  {mtime.strftime('%H:%M:%S')}")
+        except Exception:
+            print(f"  {f.stem:<20} {size:>6}B")
+
+
+def _get_clipboard() -> str:
+    import subprocess
+    try:
+        result = subprocess.run(["wl-paste"], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(["xclip", "-selection", "clipboard", "-o"], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout
+    except Exception:
+        pass
+    return ""
+
+
+def _set_clipboard(content: str) -> None:
+    import subprocess
+    try:
+        subprocess.run(["wl-copy"], input=content, text=True, timeout=2)
+    except Exception:
+        pass
+    try:
+        subprocess.run(["xclip", "-selection", "clipboard"], input=content, text=True, timeout=2)
+    except Exception:
+        pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="wsctl",
@@ -368,6 +459,19 @@ def main() -> None:
     p_dash = sub.add_parser("dashboard", help="Live TUI dashboard for thread management")
     p_dash.add_argument("--refresh", "-r", type=int, default=5, help="Refresh interval in seconds")
     p_dash.set_defaults(func=_cmd_dashboard)
+
+    p_clip = sub.add_parser("clip", help="Shared clipboard between threads")
+    clip_sub = p_clip.add_subparsers(dest="clip_command")
+
+    clip_copy = clip_sub.add_parser("copy", help="Copy clipboard to shared pool")
+    clip_copy.add_argument("--text", "-t", help="Text to copy (reads system clipboard if not set)")
+    clip_copy.set_defaults(func=_cmd_clip_copy)
+
+    clip_paste = clip_sub.add_parser("paste", help="Paste latest shared clip into clipboard")
+    clip_paste.set_defaults(func=_cmd_clip_paste)
+
+    clip_list = clip_sub.add_parser("list", help="List all shared clips")
+    clip_list.set_defaults(func=_cmd_clip_list)
 
     args = parser.parse_args()
     args.func(args)

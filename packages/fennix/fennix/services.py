@@ -324,6 +324,7 @@ class ServicesManager:
             GitActivityWatcher(thread_name),
             TerminalHistoryWatcher(thread_name),
             BrowserActivityWatcher(thread_name),
+            ClipboardBridge(thread_name),
         ]
 
     def start(self):
@@ -542,6 +543,61 @@ class BrowserActivityWatcher(BaseService):
             svc.start()
         else:
             svc.stop()
+
+
+class ClipboardBridge(BaseService):
+    name = "clipboard_bridge"
+    interval = 3
+
+    CLIPBOARD_DIR = "/shared/.clipboard"
+
+    def __init__(self, thread_name: str = "workspace"):
+        super().__init__()
+        self._thread_name = thread_name
+        self._last_content: str = ""
+        self._last_external: dict[str, float] = {}
+
+    def tick(self):
+        try:
+            import pyperclip
+            Path(self.CLIPBOARD_DIR).mkdir(parents=True, exist_ok=True)
+
+            current = pyperclip.paste() or ""
+            clip_file = Path(self.CLIPBOARD_DIR) / f"{self._thread_name}.txt"
+
+            if current and current != self._last_content:
+                clip_file.write_text(current)
+                self._last_content = current
+
+            self._check_external_clips()
+        except Exception:
+            pass
+
+    def _check_external_clips(self):
+        try:
+            import pyperclip
+            clip_dir = Path(self.CLIPBOARD_DIR)
+            if not clip_dir.exists():
+                return
+
+            latest_file = None
+            latest_mtime = 0
+            for f in clip_dir.glob("*.txt"):
+                if f.name == f"{self._thread_name}.txt":
+                    continue
+                mtime = f.stat().st_mtime
+                if mtime > latest_mtime and mtime > self._last_external.get(str(f), 0):
+                    latest_file = f
+                    latest_mtime = mtime
+
+            if latest_file:
+                content = latest_file.read_text()
+                if content and content != self._last_content:
+                    pyperclip.copy(content)
+                    self._last_content = content
+                    self._last_external[str(latest_file)] = latest_mtime
+        except Exception:
+            pass
 
 
 def get_foreground_process() -> dict | None:
