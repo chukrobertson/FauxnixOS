@@ -40,6 +40,7 @@ class FennixTray:
             self._services.stop()
             return
 
+        _apply_profile_theme(self.app)
         self._setup_tray()
         self._services.start()
         self.app.exec()
@@ -209,3 +210,14 @@ def run_tray(thread_name: str = "workspace"):
     init_fennix_db()
     tray = FennixTray(thread_name)
     tray.run()
+
+
+def _apply_profile_theme(app) -> None:
+    try:
+        from fennix.profile import read_profile_from_manifest
+        from fennix.ui.themes import apply_theme
+        profile = read_profile_from_manifest("/var/lib/workspaces")
+        if profile and profile != "headless":
+            apply_theme(app, profile)
+    except Exception:
+        pass

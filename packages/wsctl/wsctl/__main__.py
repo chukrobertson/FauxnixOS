@@ -321,10 +321,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
         sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
         from nexus.db import get_health, count_events, recent_events
         health = get_health(args.name)
-        events = count_events(args.name)
+        events_count = count_events(args.name)
         if health:
             print("\033[1;33m  Health\033[0m")
-            print(f"  Events:    {events}")
+            print(f"  Events:    {events_count}")
             print(f"  Status:    {health.get('status', 'unknown')}")
             print(f"  Crashes:   {health.get('crash_count', 0)}")
             if health.get("last_cpu"):
@@ -359,6 +359,114 @@ def _cmd_status(args: argparse.Namespace) -> None:
         print(f"  \033[90mwsctl attach {args.name}  — connect to this thread\033[0m")
     else:
         print(f"  \033[90mwsctl start {args.name}  — boot this thread\033[0m")
+
+
+def _cmd_search(args: argparse.Namespace) -> None:
+    import subprocess
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.btrfs import list_dir, path_exists
+
+    query = " ".join(args.query)
+    if not query:
+        print("Usage: wsctl search <query>")
+        return
+
+    results: list[dict] = []
+
+    _search_git(query, results)
+    _search_events(query, results)
+    _search_files(query, results)
+
+    if not results:
+        print(f"No results for '{query}'")
+        return
+
+    results.sort(key=lambda r: r.get("score", 0), reverse=True)
+
+    print(f"\033[1;37mResults for '{query}'\033[0m\n")
+    for r in results[:20]:
+        source = r["source"]
+        icon = {"git": "\033[33m⬡\033[0m", "event": "\033[36m●\033[0m", "file": "\033[32m■\033[0m"}.get(source, " ")
+        thread = f"\033[1;37m[{r['thread']}]\033[0m"
+        detail = r["detail"][:100]
+        print(f"  {icon} {thread} {detail}")
+
+
+def _search_git(query: str, results: list[dict]) -> None:
+    import subprocess
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
+    from wsctl.btrfs import list_dir, path_exists
+
+    ws_root = Path(WSCI_WORKSPACE_ROOT)
+    if not path_exists(ws_root):
+        return
+
+    for name in list_dir(ws_root):
+        if name.startswith("."):
+            continue
+        repo = ws_root / name
+        try:
+            result = subprocess.run(
+                ["sudo", "git", "-C", str(repo), "log", "--all", "--oneline",
+                 f"--grep={query}", "-20"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    results.append({
+                        "source": "git",
+                        "thread": name,
+                        "detail": line.strip()[:100],
+                        "score": 10,
+                    })
+        except Exception:
+            pass
+
+
+def _search_events(query: str, results: list[dict]) -> None:
+    try:
+        import sys
+        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        from nexus.db import get_conn
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT thread_name, source, event_data FROM thread_context WHERE event_data LIKE ? LIMIT 20",
+            (f"%{query}%",),
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            results.append({
+                "source": "event",
+                "thread": r["thread_name"],
+                "detail": f"[{r['source']}] {r['event_data'][:80]}",
+                "score": 5,
+            })
+    except Exception:
+        pass
+
+
+def _search_files(query: str, results: list[dict]) -> None:
+    try:
+        import sys
+        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/fauxnix-tools")
+        from fauxnix_tools.db import get_conn
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT path FROM files WHERE path LIKE ? OR title LIKE ? LIMIT 10",
+            (f"%{query}%", f"%{query}%"),
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            results.append({
+                "source": "file",
+                "thread": "shared",
+                "detail": f"file: {r['path']}",
+                "score": 3,
+            })
+    except Exception:
+        pass
 
 
 def _cmd_clip_copy(args: argparse.Namespace) -> None:
@@ -544,6 +652,10 @@ def main() -> None:
     p_status = sub.add_parser("status", help="Show detailed status for a thread")
     p_status.add_argument("name", help="Thread name")
     p_status.set_defaults(func=_cmd_status)
+
+    p_search = sub.add_parser("search", help="Search across all threads")
+    p_search.add_argument("query", nargs="+", help="Search query")
+    p_search.set_defaults(func=_cmd_search)
 
     p_clip = sub.add_parser("clip", help="Shared clipboard between threads")
     clip_sub = p_clip.add_subparsers(dest="clip_command")
