@@ -217,7 +217,7 @@ def _cmd_diff(args: argparse.Namespace) -> None:
 
 def _cmd_ask(args: argparse.Namespace) -> None:
     from wsctl.templates import match_template, template_description
-    from wsctl.operations import create_workspace
+    from wsctl.operations import create_workspace, start_workspace
 
     query = " ".join(args.query)
     use_llm = not args.no_llm
@@ -240,7 +240,8 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         print(f"Template: {template} — {desc}")
         print(f"Desktop feel: {profile}")
         _print_profile_info(profile)
-        print(f"Start with: wsctl start {thread_name}")
+        start_workspace(thread_name)
+        print(f"Thread started — Fennix and Archivist are initializing...")
     except FileExistsError:
         print(f"Error: Thread '{thread_name}' already exists", file=sys.stderr)
         sys.exit(1)

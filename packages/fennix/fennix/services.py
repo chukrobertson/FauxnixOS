@@ -325,6 +325,7 @@ class ServicesManager:
             TerminalHistoryWatcher(thread_name),
             BrowserActivityWatcher(thread_name),
             ClipboardBridge(thread_name),
+            GitAutoCommitService(),
         ]
 
     def start(self):
@@ -598,6 +599,77 @@ class ClipboardBridge(BaseService):
                     self._last_external[str(latest_file)] = latest_mtime
         except Exception:
             pass
+
+
+class GitAutoCommitService(BaseService):
+    name = "git_autocommit"
+    interval = 300
+
+    def tick(self):
+        from fennix.stream import stream_git_event
+        for repo_path in self._find_repos():
+            try:
+                if not self._has_changes(repo_path):
+                    continue
+                self._commit(repo_path)
+                branch = self._current_branch(repo_path)
+                msg = f"auto: checkpoint {self._timestamp()}"
+                stream_git_event(
+                    "auto", str(repo_path), branch, msg, "commit",
+                )
+            except Exception:
+                pass
+
+    def _find_repos(self) -> list[Path]:
+        repos: list[Path] = []
+        for base in [Path("/shared"), Path("/home/chxk")]:
+            if not base.exists():
+                continue
+            for git_dir in base.rglob(".git"):
+                if git_dir.is_dir():
+                    repos.append(git_dir.parent)
+                    if len(repos) >= 10:
+                        return repos
+        return repos
+
+    def _has_changes(self, repo_path: Path) -> bool:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "-C", str(repo_path), "status", "--porcelain"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    def _commit(self, repo_path: Path) -> None:
+        import subprocess
+        subprocess.run(
+            ["git", "-C", str(repo_path), "add", "-A"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_path), "commit", "-m",
+             f"auto: checkpoint {self._timestamp()}"],
+            capture_output=True, timeout=10,
+        )
+
+    def _current_branch(self, repo_path: Path) -> str:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "-C", str(repo_path), "branch", "--show-current"],
+                capture_output=True, text=True, timeout=3,
+            )
+            return result.stdout.strip() or "main"
+        except Exception:
+            return "main"
+
+    @staticmethod
+    def _timestamp() -> str:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
 def get_foreground_process() -> dict | None:
