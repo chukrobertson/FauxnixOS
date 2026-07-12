@@ -220,7 +220,8 @@ def _cmd_ask(args: argparse.Namespace) -> None:
     from wsctl.operations import create_workspace
 
     query = " ".join(args.query)
-    template = match_template(query)
+    use_llm = not args.no_llm
+    template = match_template(query, use_llm=use_llm)
     desc = template_description(template)
     profile = args.profile or "headless"
     thread_name = args.name or template + "-" + _short_id()
@@ -272,6 +273,11 @@ def _cmd_profiles(args: argparse.Namespace) -> None:
     print("Usage:")
     print("  wsctl create <name> --profile win11")
     print("  wsctl ask 'coding work' --profile macos")
+
+
+def _cmd_dashboard(args: argparse.Namespace) -> None:
+    from wsctl.dashboard import run_dashboard
+    run_dashboard(refresh=args.refresh)
 
 
 def main() -> None:
@@ -353,10 +359,15 @@ def main() -> None:
     p_ask.add_argument("--profile", "-p", choices=["win11", "macos", "headless"], default="headless",
                        help="Desktop feel (win11, macos, or headless)")
     p_ask.add_argument("--dry-run", action="store_true", help="Show what would be created")
+    p_ask.add_argument("--no-llm", action="store_true", help="Skip LLM matching, use keywords only")
     p_ask.set_defaults(func=_cmd_ask)
 
     p_profiles = sub.add_parser("profiles", help="List available desktop feel profiles")
     p_profiles.set_defaults(func=_cmd_profiles)
+
+    p_dash = sub.add_parser("dashboard", help="Live TUI dashboard for thread management")
+    p_dash.add_argument("--refresh", "-r", type=int, default=5, help="Refresh interval in seconds")
+    p_dash.set_defaults(func=_cmd_dashboard)
 
     args = parser.parse_args()
     args.func(args)

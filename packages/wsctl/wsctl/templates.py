@@ -56,7 +56,76 @@ TEMPLATE_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-def match_template(query: str) -> str:
+def template_description(template_name: str) -> str:
+    descriptions: dict[str, str] = {
+        "ml-python": "Python ML/Data Science — PyTorch, Jupyter, NumPy, Pandas",
+        "coding": "General coding — Python, Rust, Go, Node.js, C, git, neovim, tmux",
+        "rust-dev": "Rust development — cargo, rustc, rust-analyzer, clippy",
+        "web-dev": "Web development — Node.js, TypeScript, VS Code",
+        "writing": "Writing — Pandoc, Zathura, LaTeX, spellcheck",
+        "documents": "Documents — LibreOffice, Pandoc, LaTeX, Calibre, PDF tools",
+        "research": "Research — Firefox, Obsidian, Zotero, clipboard, notes",
+        "audio": "Audio — Ardour, Audacity, LMMS, FFmpeg, SoX",
+        "image-video": "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS",
+        "gaming": "Gaming — Steam, Lutris, Wine, GameMode, MangoHud",
+    }
+    return descriptions.get(template_name, template_name)
+
+
+def match_template_llm(query: str) -> str | None:
+    try:
+        from fauxnix_tools.llm import chat_messages
+    except ImportError:
+        return None
+
+    template_list = "\n".join(
+        f"- {name}: {desc}"
+        for name, desc in [
+            ("ml-python", "Python ML/Data Science — PyTorch, Jupyter, NumPy, Pandas"),
+            ("coding", "General coding — Python, Rust, Go, Node.js, C, git, neovim"),
+            ("rust-dev", "Rust development — cargo, rustc, rust-analyzer, clippy"),
+            ("web-dev", "Web development — Node.js, TypeScript, VS Code"),
+            ("writing", "Writing — Pandoc, Zathura, LaTeX, spellcheck"),
+            ("documents", "Documents — LibreOffice, Pandoc, LaTeX, PDF, publishing"),
+            ("research", "Research — Firefox, Obsidian, Zotero, notes, clipboard"),
+            ("audio", "Audio — Ardour, Audacity, LMMS, FFmpeg, music production"),
+            ("image-video", "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS"),
+            ("gaming", "Gaming — Steam, Lutris, Wine, GameMode, MangoHud"),
+        ]
+    )
+
+    prompt = (
+        "You are a thread template classifier for FauxnixOS. "
+        "Given a user's natural language request, pick the SINGLE best matching template "
+        "from the list below. Respond with ONLY the template name, no other text.\n\n"
+        f"Available templates:\n{template_list}\n\n"
+        f"User request: {query}\n\nTemplate:"
+    )
+
+    try:
+        response = chat_messages(
+            messages=[{"role": "user", "content": prompt}],
+            task="summary",
+        )
+        result = response.get("message", {}).get("content", "").strip().lower()
+        valid = {
+            "ml-python", "coding", "rust-dev", "web-dev", "writing",
+            "documents", "research", "audio", "image-video", "gaming",
+        }
+        if result in valid:
+            return result
+    except Exception:
+        pass
+
+    return None
+
+
+def match_template(query: str, use_llm: bool = True) -> str:
+    if use_llm:
+        llm_result = match_template_llm(query)
+        if llm_result:
+            return llm_result
+
     query_lower = query.lower()
     scores: dict[str, int] = {}
 
@@ -72,19 +141,3 @@ def match_template(query: str) -> str:
         return "coding"
 
     return max(scores, key=lambda k: scores[k])
-
-
-def template_description(template_name: str) -> str:
-    descriptions: dict[str, str] = {
-        "ml-python": "Python ML/Data Science — PyTorch, Jupyter, NumPy, Pandas",
-        "coding": "General coding — Python, Rust, Go, Node.js, C, git, neovim, tmux",
-        "rust-dev": "Rust development — cargo, rustc, rust-analyzer, clippy",
-        "web-dev": "Web development — Node.js, TypeScript, VS Code",
-        "writing": "Writing — Pandoc, Zathura, LaTeX, spellcheck",
-        "documents": "Documents — LibreOffice, Pandoc, LaTeX, Calibre, PDF tools",
-        "research": "Research — Firefox, Obsidian, Zotero, clipboard, notes",
-        "audio": "Audio — Ardour, Audacity, LMMS, FFmpeg, SoX",
-        "image-video": "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS",
-        "gaming": "Gaming — Steam, Lutris, Wine, GameMode, MangoHud",
-    }
-    return descriptions.get(template_name, template_name)
