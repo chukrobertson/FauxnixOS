@@ -1,5 +1,19 @@
 # Contributing to FauxnixOS Core
 
+FauxnixOS is an AI-native NixOS with containerized threads of continuity. This repo contains all the core packages.
+
+## Package Map
+
+```
+packages/
+├── fauxnix-tools/    # Shared library — NO deps on other packages
+├── fennix/           # In-thread assistant — depends on fauxnix-tools
+├── nexus/            # Host daemon — depends on fauxnix-tools
+├── wsctl/            # Thread CLI — no Python deps (stdlib only)
+├── archivist/        # File manager — depends on fauxnix-tools
+└── membrie/          # Superseded — reference only
+```
+
 ## Getting Started
 
 ```bash

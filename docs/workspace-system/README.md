@@ -1,5 +1,7 @@
 # FauxnixOS Thread System
 
+> **Note:** These documents are the original design specifications. The implementation evolved significantly — see [ARCHITECTURE.md](../../ARCHITECTURE.md) and [README](../../README.md) for current state.
+
 Container-based threads of continuity with AI-driven context awareness, fork/join operations, and dual desktop feels.
 
 ## Concept
