@@ -61,6 +61,36 @@ class ArchivistDaemon:
                     org_result = apply_rules_to_directory(w["path"])
                     if org_result.get("moved", 0) > 0:
                         self._notify(f"Organized {org_result['moved']} files in {w.get('label', w['path'])}")
+
+                self._scan_media(w["path"])
+            except Exception:
+                pass
+
+    def _scan_media(self, dir_path: str) -> None:
+        IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
+        root = Path(dir_path)
+        if not root.exists():
+            return
+
+        image_files = [f for f in root.rglob("*") if f.suffix.lower() in IMAGE_EXTS]
+        if not image_files:
+            return
+
+        for img in image_files[:5]:
+            try:
+                from fauxnix_tools.vision.faces import scan_file_faces
+                result = scan_file_faces(None, str(img), "image")
+                if result.get("face_count", 0) > 0:
+                    self._notify(f"Found {result['face_count']} faces in {img.name}")
+            except Exception:
+                pass
+
+            try:
+                from fauxnix_tools.vision.objects import detect_objects_in_image
+                result = detect_objects_in_image(str(img))
+                if result.get("ok") and result.get("objects"):
+                    count = len(result["objects"])
+                    self._notify(f"Found {count} objects in {img.name}")
             except Exception:
                 pass
 

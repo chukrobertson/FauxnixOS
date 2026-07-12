@@ -37,8 +37,31 @@ def opencv_status() -> dict:
         return {"available": False, "detector": "opencv_haar", "error": "OpenCV not installed."}
     try:
         import cv2
-        cascade = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-        return {"available": cascade.exists(), "detector": "opencv_haar", "cascade": str(cascade), "error": None if cascade.exists() else "Haar cascade file not found."}
+        cascade = None
+
+        candidates = []
+        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+            candidates.append(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
+        candidates.append(Path(cv2.__file__).parent / "data" / "haarcascade_frontalface_default.xml")
+
+        try:
+            import glob as _glob
+            nix_paths = _glob.glob(
+                "/nix/store/*opencv*/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"
+            )
+            if nix_paths:
+                candidates.insert(0, Path(nix_paths[0]))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            if candidate.exists():
+                cascade = candidate
+                break
+
+        if cascade is None:
+            return {"available": False, "detector": "opencv_haar", "error": "Haar cascade file not found."}
+        return {"available": True, "detector": "opencv_haar", "cascade": str(cascade), "error": None}
     except Exception as error:
         return {"available": False, "detector": "opencv_haar", "error": str(error)}
 
@@ -73,12 +96,15 @@ def _load_detector():
     return cv2, cv2.CascadeClassifier(status["cascade"])
 
 
-def _prepare_image(path: Path) -> Image.Image:
+def _prepare_image(path: Path):
+    from PIL import Image, ImageOps, Image as PILImage
+    PILImage.MAX_IMAGE_PIXELS = None
     with Image.open(path) as image:
         return ImageOps.exif_transpose(image).convert("RGB")
 
 
-def _scaled_for_detection(image: Image.Image) -> tuple[Image.Image, float]:
+def _scaled_for_detection(image, min_dim: int = 640, max_dim: int = 1920):
+    from PIL import Image
     w, h = image.size
     largest = max(w, h)
     if largest <= config.face_max_dim:
@@ -87,7 +113,7 @@ def _scaled_for_detection(image: Image.Image) -> tuple[Image.Image, float]:
     return image.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS), scale
 
 
-def _detect_boxes(image: Image.Image) -> list[dict]:
+def _detect_boxes(image) -> list[dict]:
     cv2, detector = _load_detector()
     import numpy as np
     work_image, scale = _scaled_for_detection(image)
@@ -116,7 +142,8 @@ def _padded_box(box: dict, image_size: tuple[int, int], pad_ratio: float = 0.22)
     return left, top, right, bottom
 
 
-def _average_hash(image: Image.Image, size: int = 8) -> str:
+def _average_hash(image, size: int = 8) -> str:
+    from PIL import ImageOps
     small = ImageOps.grayscale(image.resize((size, size), Image.Resampling.LANCZOS))
     pixels = list(small.getdata())
     avg = sum(pixels) / max(1, len(pixels))
@@ -126,7 +153,7 @@ def _average_hash(image: Image.Image, size: int = 8) -> str:
     return f"{value:0{size * size // 4}x}"
 
 
-def _save_crop(image: Image.Image, media_path: Path, box: dict, index: int, source: str, frame_seconds: float | None) -> tuple[str, str]:
+def _save_crop(image, media_path: Path, box: dict, index: int, source: str, frame_seconds: float | None) -> tuple[str, str]:
     crop = image.crop(_padded_box(box, image.size))
     signature = _average_hash(crop)
     key = _media_key(media_path)
