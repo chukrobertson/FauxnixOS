@@ -1,7 +1,7 @@
 {
-  "name": "Fennix",
-  "description": "Continuity assistant",
+  "name": "Fennix — Thread Manager",
+  "description": "Nexus search provider and thread dock for FauxnixOS",
   "uuid": "fennix@fauxnix.local",
-  "shell-version": ["50.1"],
-  "version": 1
+  "shell-version": ["50.1", "50"],
+  "version": 2
 }

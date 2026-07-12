@@ -104,15 +104,9 @@ in
       alsa.support32Bit = true;
     };
 
-    # GNOME Fennix extension
-    environment.systemPackages = lib.mkIf cfg.enableDesktop (with pkgs; [
-      gnome-console
-      gnome-text-editor
-      nautilus
-      gnome-shell-extensions
-    ]);
+    # Fennix GNOME extension
+    environment.etc."skel/.local/share/gnome-shell/extensions/fennix@fauxnix.local".source = fennix-extension;
 
-    # Wallpaper + lock screen
     programs.dconf.profiles.gdm.databases = lib.mkIf cfg.enableDesktop [
       {
         settings = {
@@ -126,11 +120,15 @@ in
             picture-uri = "file://${fauxnix-wallpaper}";
             picture-options = "zoom";
           };
+          "org/gnome/shell" = {
+            enabled-extensions = [ "fennix@fauxnix.local" ];
+            favorite-apps = [ "org.gnome.Console.desktop" "org.gnome.Nautilus.desktop" ];
+          };
         };
       }
     ];
 
-    # System packages
+    # System packages (merged)
     environment.systemPackages = with pkgs; [
       git
       btrfs-progs
@@ -138,6 +136,11 @@ in
       curl
       htop
       waypipe
+    ] ++ lib.optionals cfg.enableDesktop [
+      gnome-console
+      gnome-text-editor
+      nautilus
+      gnome-shell-extensions
     ];
 
     environment.variables.PATH = [ "$HOME/.local/bin" ];
