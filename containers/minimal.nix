@@ -20,6 +20,36 @@ let
     exec ${python-env}/bin/python3 -m fennix
   '';
 
+  launch-graphical = pkgs.writeShellScriptBin "launch-graphical" ''
+    PROFILE="''${1:-win11}"
+    WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-wayland-0}"
+    XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/tmp/runtime-chxk}"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+
+    export PATH="${pkgs.labwc}/bin:${pkgs.waypipe}/bin:${python-env}/bin:$PATH"
+    export PYTHONPATH="/fauxnix-core/packages/fennix:/fauxnix-core/packages/fauxnix-tools"
+
+    COMPOSITOR_CONFIG="/fauxnix-core/containers/compositors/labwc-$PROFILE.xml"
+    if [ ! -f "$COMPOSITOR_CONFIG" ]; then
+      COMPOSITOR_CONFIG="/fauxnix-core/containers/compositors/labwc-win11.xml"
+    fi
+
+    echo "[fauxnix] starting labwc with $PROFILE profile..."
+    labwc -C "$COMPOSITOR_CONFIG" &
+    LABWC_PID=$!
+    sleep 2
+
+    echo "[fauxnix] starting Fennix GUI..."
+    export DISPLAY=:0
+    export WAYLAND_DISPLAY=$WAYLAND_DISPLAY
+    FENNIX_AUTO_INGEST=false ${python-env}/bin/python3 -m fennix &
+    FENNIX_PID=$!
+
+    trap 'kill $LABWC_PID $FENNIX_PID 2>/dev/null' EXIT
+    wait $LABWC_PID
+  '';
+
   archivist-script = pkgs.writeShellScriptBin "archivist-start" ''
     export PATH="${python-env}/bin:$PATH"
     export PYTHONPATH="/fauxnix-core/packages/archivist:/fauxnix-core/packages/fauxnix-tools"
@@ -113,6 +143,12 @@ in
     htop
     btrfs-progs
     python-env
+    labwc
+    waypipe
+    xwayland
+    fontconfig
+    dejavu_fonts
+    launch-graphical
   ];
 
   system.stateVersion = "26.05";
