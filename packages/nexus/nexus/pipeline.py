@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import struct
 from collections import Counter
-from datetime import datetime, timezone
 
-from nexus.db import recent_events, insert_event
+from nexus.db import recent_events, get_conn
+
+
+OLLAMA_URL = "http://localhost:11434/api/embeddings"
+EMBED_MODEL = "nomic-embed-text"
 
 
 def textify_events(thread_name: str, limit: int = 50) -> str:
@@ -72,24 +76,48 @@ def textify_events(thread_name: str, limit: int = 50) -> str:
     return ". ".join(parts) if parts else f"{len(events)} events"
 
 
-def ngram_vector(text: str, n: int = 3) -> dict[str, float]:
+def embed_text(text: str) -> list[float]:
     if not text:
-        return {}
+        return []
+
+    try:
+        import urllib.request
+        data = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode()
+        req = urllib.request.Request(OLLAMA_URL, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("embedding", [])
+    except Exception:
+        pass
+
+    return _ngram_sparse_vector(text)
+
+
+def _ngram_sparse_vector(text: str, n: int = 3, dims: int = 768) -> list[float]:
+    if not text:
+        return [0.0] * dims
+
     chars = text.lower()
-    ngrams = [chars[i:i+n] for i in range(len(chars) - n + 1)]
+    ngrams = [hash(chars[i:i+n]) % dims for i in range(len(chars) - n + 1)]
+    if not ngrams:
+        return [0.0] * dims
+
     counter = Counter(ngrams)
     total = sum(counter.values())
-    return {k: v / total for k, v in counter.items()} if total else {}
+    vec = [0.0] * dims
+    for idx, count in counter.items():
+        vec[idx] = count / total * 3.0
+    return vec
 
 
-def cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float:
+def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if not vec_a or not vec_b:
         return 0.0
 
-    all_keys = set(vec_a) | set(vec_b)
-    dot = sum(vec_a.get(k, 0) * vec_b.get(k, 0) for k in all_keys)
-    mag_a = sum(v ** 2 for v in vec_a.values()) ** 0.5
-    mag_b = sum(v ** 2 for v in vec_b.values()) ** 0.5
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    mag_a = sum(v ** 2 for v in vec_a) ** 0.5
+    mag_b = sum(v ** 2 for v in vec_b) ** 0.5
 
     if mag_a == 0 or mag_b == 0:
         return 0.0
@@ -97,9 +125,45 @@ def cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float
     return dot / (mag_a * mag_b)
 
 
-def embed_events(thread_name: str, limit: int = 50) -> tuple[str, dict[str, float]]:
+def pack_vector(vec: list[float]) -> bytes:
+    return struct.pack(f"{len(vec)}f", *vec)
+
+
+def unpack_vector(data: bytes) -> list[float]:
+    count = len(data) // 4
+    return list(struct.unpack(f"{count}f", data))
+
+
+def store_vector(thread_name: str, text_summary: str, vector: list[float]) -> None:
+    if not vector:
+        return
+    conn = get_conn()
+    blob = pack_vector(vector)
+    conn.execute(
+        "INSERT INTO thread_vectors (thread_name, vector, text_summary) VALUES (?, ?, ?)",
+        (thread_name, blob, text_summary),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_latest_vector(thread_name: str) -> tuple[str, list[float]] | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT text_summary, vector FROM thread_vectors WHERE thread_name = ? ORDER BY id DESC LIMIT 1",
+        (thread_name,),
+    ).fetchone()
+    conn.close()
+    if row and row["vector"]:
+        return row["text_summary"], unpack_vector(row["vector"])
+    return None
+
+
+def embed_events(thread_name: str, limit: int = 50) -> tuple[str, list[float]]:
     summary = textify_events(thread_name, limit)
-    vector = ngram_vector(summary)
+    vector = embed_text(summary)
+    if vector:
+        store_vector(thread_name, summary, vector)
     return summary, vector
 
 
@@ -107,10 +171,10 @@ def cluster_threads(thread_names: list[str], threshold: float = 0.6) -> list[dic
     if len(thread_names) < 2:
         return []
 
-    vectors: dict[str, tuple[str, dict[str, float]]] = {}
+    vectors: dict[str, tuple[str, list[float]]] = {}
     for name in thread_names:
         summary, vector = embed_events(name)
-        if summary:
+        if summary and vector:
             vectors[name] = (summary, vector)
 
     overlaps: list[dict] = []
@@ -145,8 +209,8 @@ def detect_drift(thread_name: str, window_a: int = 50, window_b: int = 20) -> di
     if not older_text or not recent_text:
         return None
 
-    older_vec = ngram_vector(older_text)
-    recent_vec = ngram_vector(recent_text)
+    older_vec = embed_text(older_text)
+    recent_vec = embed_text(recent_text)
     similarity = cosine_similarity(older_vec, recent_vec)
 
     if similarity >= 0.7:
