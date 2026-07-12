@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import atexit
+import os
 import signal
 import sys
 import time
@@ -8,13 +10,42 @@ from nexus.db import init_db, event_counts
 from nexus.engine import ContextAggregator, ThreadSupervisor, PipelineRunner, SnapshotService, ThreadHealthMonitor
 from nexus.services import ServicesManager
 
+PID_FILE = "/tmp/nexus.pid"
+
+
+def _acquire_lock() -> bool:
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)
+            print(f"[nexus] already running (PID {old_pid})", file=sys.stderr)
+            return False
+        except (OSError, ValueError):
+            pass
+
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+    return True
+
+
+def _release_lock() -> None:
+    try:
+        os.unlink(PID_FILE)
+    except FileNotFoundError:
+        pass
+
 
 def main() -> None:
+    if not _acquire_lock():
+        sys.exit(1)
+
+    atexit.register(_release_lock)
+
     init_db()
 
     manager = ServicesManager()
-    aggregator = ContextAggregator()
-    manager.add(aggregator)
+    manager.add(ContextAggregator())
     manager.add(ThreadSupervisor())
     manager.add(PipelineRunner())
     manager.add(SnapshotService())
@@ -55,6 +86,7 @@ def main() -> None:
             last_suggestions = pc
 
     print("[nexus] shutting down...")
+    _release_lock()
     manager.stop_all()
     sys.exit(0)
 
