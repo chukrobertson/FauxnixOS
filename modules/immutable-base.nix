@@ -6,6 +6,9 @@ let
   fennix-extension = ../modules/gnome/fennix-extension;
   nexus-welcome-script = ../scripts/nexus-welcome.sh;
   nexus-welcome-desktop = ../modules/gnome/nexus-welcome.desktop;
+  nexus-search-provider = ../scripts/nexus-search-provider.py;
+  nexus-search-desktop = ../modules/gnome/nexus-search-provider.desktop;
+  nexus-search-ini = ../modules/gnome/org.fauxnix.NexusSearchProvider.search-provider.ini;
 in
 {
   options.fauxnix.immutable-base = {
@@ -150,6 +153,8 @@ in
       htop
       waypipe
       zenity
+      python3
+      python3.pkgs.pygobject3
     ] ++ lib.optionals cfg.enableDesktop [
       gnome-console
       gnome-text-editor
@@ -178,6 +183,27 @@ in
       mkdir -p /var/lib/nixos
       cp ${nexus-welcome-script} /run/current-system/sw/bin/nexus-welcome
       chmod +x /run/current-system/sw/bin/nexus-welcome
+      cp ${nexus-search-provider} /run/current-system/sw/bin/nexus-search-provider
+      chmod +x /run/current-system/sw/bin/nexus-search-provider
+    '';
+
+    # Nexus search provider
+    environment.etc."xdg/autostart/nexus-search-provider.desktop".text = ''
+      [Desktop Entry]
+      Type=Application
+      Name=Nexus Search
+      Exec=/run/current-system/sw/bin/nexus-search-provider
+      Terminal=false
+      NoDisplay=true
+      X-GNOME-Autostart-enabled=true
+    '';
+
+    environment.etc."skel/.local/share/gnome-shell/search-providers/org.fauxnix.NexusSearchProvider.search-provider.ini".text = ''
+      [Shell Search Provider]
+      DesktopId=nexus-search-provider.desktop
+      BusName=org.fauxnix.NexusSearchProvider
+      ObjectPath=/org/fauxnix/NexusSearchProvider
+      Version=2
     '';
 
     system.stateVersion = "26.05";

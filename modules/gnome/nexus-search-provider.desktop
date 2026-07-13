@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nexus Search
+Comment=Search FauxnixOS threads from GNOME Activities
+Exec=/run/current-system/sw/bin/nexus-search-provider
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

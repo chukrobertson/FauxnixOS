@@ -122,10 +122,38 @@ class ThreadIndicator extends PanelMenu.Button {
                 for (let line of lines) {
                     let parts = line.trim().split(/\s+/);
                     let name = parts[0] || 'unknown';
-                    let item = new PopupMenu.PopupMenuItem(name);
-                    item.connect('activate', () => {
+                    let item = new PopupMenu.PopupSubMenuMenuItem(name);
+
+                    let shellItem = new PopupMenu.PopupMenuItem('Attach (shell)');
+                    shellItem.connect('activate', () => {
                         this._runWsctl(['attach', name]);
                     });
+                    item.menu.addMenuItem(shellItem);
+
+                    let vncItem = new PopupMenu.PopupMenuItem('Open in VNC (waypipe)');
+                    vncItem.connect('activate', () => {
+                        Gio.Subprocess.new(
+                            ['waypipe', 'ssh', `chxk@${name}.local`],
+                            Gio.SubprocessFlags.NONE
+                        );
+                    });
+                    item.menu.addMenuItem(vncItem);
+
+                    let statusItem = new PopupMenu.PopupMenuItem('View status');
+                    statusItem.connect('activate', () => {
+                        Gio.Subprocess.new(
+                            ['gnome-terminal', '--', 'wsctl', 'status', name],
+                            Gio.SubprocessFlags.NONE
+                        );
+                    });
+                    item.menu.addMenuItem(statusItem);
+
+                    let stopItem = new PopupMenu.PopupMenuItem('Stop thread');
+                    stopItem.connect('activate', () => {
+                        this._runWsctl(['stop', name]);
+                    });
+                    item.menu.addMenuItem(stopItem);
+
                     this._threadSection.addMenuItem(item);
                 }
             });
