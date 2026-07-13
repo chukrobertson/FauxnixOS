@@ -100,7 +100,7 @@ search     clip       snapshots  (prune)
 | ClipboardBridge | 3s | Shared clipboard |
 | GitAutoCommitService | 300s | Auto-commit every 5 min |
 
-## Thread Templates (11)
+## Thread Templates (13)
 
 | Template | Packages |
 |----------|----------|
@@ -114,6 +114,8 @@ search     clip       snapshots  (prune)
 | `audio` | Ardour, Audacity, LMMS, FFmpeg |
 | `image-video` | GIMP, Inkscape, Blender, Kdenlive |
 | `gaming` | Steam, Lutris, Wine, GameMode |
+| `emulation` | RetroArch, Dolphin, PCSX2, DuckStation |
+| `dvd-ripping` | Handbrake, MakeMKV, FFmpeg, libdvdcss |
 | `minimal` | git, neovim, curl (base thread) |
 
 ## Desktop Feels
@@ -136,16 +138,20 @@ QSS themes (3.5KB each) applied by Fennix on boot. Wayvnc VNC server auto-assign
 
 ## GNOME Base
 
-The immutable base runs GNOME with a Fennix extension:
+The immutable base runs GNOME with a Fennix extension and search integration:
+
 - **Top bar indicator** — live thread count, updates every 10s
 - **Quick-create menu** — any template in one click
-- **Running thread list** — click to attach
+- **Thread submenu** — Attach (shell), Open in VNC (waypipe), View status, Stop thread
+- **GNOME Search Provider** — type `create ml` in Activities to create a thread
+- **Welcome dialog** — on login: "What do you need to do today?" with thread resume
+- **Daily digest** — shows recent activity across all threads
 - **Wallpaper + lockscreen** — Fauxnix branding
 - **Runs only essential services** — Nexus, Ollama, SSH
 
 ## Status
 
-**31 commits, 87 Python files, all features proven working.** Threads boot with Fennix + Archivist, events stream to Nexus, pipeline clusters + suggests, face/object detection runs automatically.
+**40+ commits, 90+ Python files, all features proven working.** Threads boot with Fennix + Archivist, events stream to Nexus, pipeline clusters + suggests, face/object detection runs automatically, GNOME search provider answers queries.
 
 ## Documentation
 

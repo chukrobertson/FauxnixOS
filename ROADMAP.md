@@ -25,22 +25,27 @@
 | Immutable NixOS base module | ✅ |
 | GNOME base + Fennix shell extension | ✅ |
 | VNC access per thread (wayvnc, ports 5901-5920) | ✅ |
+| Security audit + hardening | ✅ |
+| GNOME Search Provider | ✅ |
+| Thread Dock with VNC launch | ✅ |
+| VNC auto-start on graphical threads | ✅ |
+| Waypipe attach hints | ✅ |
+| Fennix thread resume summary | ✅ |
+| Nexus daily digest | ✅ |
+| Welcome dialog on login | ✅ |
+| DVD ripping + emulation templates | ✅ |
 
 ## Next — Short Term
 
 | Feature | What |
 |---------|------|
-| **Deploy immutable base** | Install on a spare machine. Test full boot flow: GNOME login → Nexus running → create thread → VNC in. |
-| **Waypipe auto-connect** | `wsctl attach` should detect if a display is available and auto-launch waypipe for graphical threads. |
-| **Template closure rebuild** | Rebuild the container closure with templates included so packages actually install (currently advisory). |
-| **VNC auto-start** | Start wayvnc inside graphical threads automatically on boot. |
+| **Deploy immutable base** | Install on a spare machine. Full boot flow: GNOME login → welcome dialog → create thread → VNC in. |
+| **Template closure rebuild** | Rebuild container closure with templates included. |
 
 ## Next — Medium Term
 
 | Feature | What |
 |---------|------|
-| **Nexus search provider** | GNOME Shell search integration. Type "create ml thread" in the GNOME Activities search → Nexus creates it. Register as a DBus `SearchProvider`. |
-| **Thread dock integration** | Running threads appear in the GNOME dash like apps. Click dock icon → VNC or waypipe into thread. |
 | **Multi-user threads** | `wsctl create --user bob`. Per-user thread ownership, quotas. |
 | **Thread resource limits** | CPU/mem quotas per thread via nspawn resource controls. |
 | **Web dashboard** | Remote thread management from browser. Shows thread tree, health, suggestions. |
