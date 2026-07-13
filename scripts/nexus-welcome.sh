@@ -5,6 +5,17 @@
 export PATH="$HOME/.local/bin:$PATH"
 WSCTL="$HOME/.local/bin/wsctl"
 
+# Fetch activity digest from Nexus DB
+digest_text=$(python3 -c "
+import sys
+sys.path.insert(0, '/home/chxk/Projects/fauxnix-core/packages/nexus')
+try:
+    from nexus.digest import digest_text
+    print(digest_text())
+except Exception:
+    print('')
+" 2>/dev/null)
+
 threads=$($WSCTL list 2>/dev/null | tail -n +3)
 running_count=$(echo "$threads" | grep -c "running")
 total_count=$(echo "$threads" | wc -l)
@@ -32,9 +43,14 @@ else
         thread_list+="$icon $name $status\\n"
     done <<< "$threads"
 
+    digest_display=""
+    if [ -n "$digest_text" ]; then
+        digest_display="\n<b>Recent activity:</b>\n${digest_text}\n\n"
+    fi
+
     choice=$(zenity --list \
         --title="Welcome to FauxnixOS" \
-        --text="<big><b>What do you need to do today?</b></big>\n\n$running_count running · $total_count total threads\n\n<i>Would you like to pick up where you left off?</i>" \
+        --text="<big><b>What do you need to do today?</b></big>\n\n$running_count running · $total_count total threads\n\n<i>Would you like to pick up where you left off?</i>${digest_display}" \
         --column="Action" --column="Description" \
         --width=550 --height=450 \
         "🔄 Resume most recent" "Pick up where you left off" \

@@ -11,9 +11,17 @@ def generate_thread_summary(thread_name: str) -> str:
     title = f"🧵 {thread_name}"
     parts.append(title)
 
+    manifest_info = _manifest_info(thread_name)
+    if manifest_info:
+        parts.append(manifest_info)
+
     git_summary = _git_summary(thread_name)
     if git_summary:
         parts.append(git_summary)
+
+    health_info = _health_info(thread_name)
+    if health_info:
+        parts.append(health_info)
 
     event_summary = _event_summary(thread_name)
     if event_summary:
@@ -24,6 +32,73 @@ def generate_thread_summary(thread_name: str) -> str:
         parts.append(file_summary)
 
     return "\n".join(parts)
+
+
+def _manifest_info(thread_name: str) -> str:
+    ws_path = Path("/var/lib/workspaces") / thread_name
+    manifest_path = ws_path / "ws-manifest.json"
+    if not manifest_path.exists():
+        return ""
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        template = manifest.get("nix", {}).get("template")
+        profile = manifest.get("nix", {}).get("profile", "headless")
+        created = manifest.get("workspace", {}).get("created", "")[:10]
+        last_active = manifest.get("activity", {}).get("last_active", "")
+
+        parts = []
+        if template:
+            parts.append(f"🔧 Template: {template}")
+        if profile and profile != "headless":
+            parts.append(f"🖥️  Profile: {profile}")
+
+        if last_active:
+            try:
+                last_dt = datetime.fromisoformat(last_active)
+                now = datetime.now(timezone.utc)
+                delta = now - last_dt
+                if delta.days > 0:
+                    parts.append(f"⏱️  Last active: {delta.days}d ago")
+                elif delta.seconds > 3600:
+                    parts.append(f"⏱️  Last active: {delta.seconds // 3600}h ago")
+                elif delta.seconds > 60:
+                    parts.append(f"⏱️  Last active: {delta.seconds // 60}m ago")
+                else:
+                    parts.append(f"⏱️  Last active: just now")
+            except Exception:
+                pass
+
+        return " · ".join(parts) if parts else ""
+    except Exception:
+        return ""
+
+
+def _health_info(thread_name: str) -> str:
+    try:
+        import sys
+        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        from nexus.db import get_health
+        health = get_health(thread_name)
+        if not health:
+            return ""
+
+        parts = []
+        crashes = health.get("crash_count", 0)
+        if crashes > 0:
+            parts.append(f"⚠️  {crashes} previous crash(es)")
+
+        status = health.get("status", "")
+        if status == "running":
+            started = health.get("started_at", "")[:19]
+            if started:
+                parts.append(f"🟢 Running since {started}")
+
+        if parts:
+            return " · ".join(parts)
+    except Exception:
+        pass
+    return ""
 
 
 def _git_summary(thread_name: str) -> str:
