@@ -53,6 +53,17 @@ TEMPLATE_KEYWORDS: dict[str, list[str]] = {
         "game", "games", "gaming", "steam", "play", "proton",
         "wine", "lutris", "fps", "rpg", "mmo", "minecraft",
     ],
+    "dvd-ripping": [
+        "dvd", "bluray", "blu-ray", "rip", "ripping", "handbrake",
+        "makemkv", "optical", "disc", "disk", "cd", "burn",
+        "convert video", "transcode", "encode",
+    ],
+    "emulation": [
+        "emulate", "emulator", "emulation", "rom", "roms", "retro",
+        "retroarch", "dolphin", "pcsx2", "ps2", "gamecube", "wii",
+        "nintendo", "playstation", "psp", "gba", "snes", "mega drive",
+        "genesis", "n64", "dreamcast", "ds", "3ds", "switch",
+    ],
 }
 
 
@@ -68,6 +79,8 @@ def template_description(template_name: str) -> str:
         "audio": "Audio — Ardour, Audacity, LMMS, FFmpeg, SoX",
         "image-video": "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS",
         "gaming": "Gaming — Steam, Lutris, Wine, GameMode, MangoHud",
+        "dvd-ripping": "DVD Ripping — Handbrake, MakeMKV, FFmpeg, libdvdcss",
+        "emulation": "Emulation — RetroArch, Dolphin, PCSX2, DuckStation, melonDS",
     }
     return descriptions.get(template_name, template_name)
 
@@ -86,6 +99,8 @@ def match_template_llm(query: str) -> str | None:
             ("audio", "Audio — Ardour, Audacity, LMMS, FFmpeg, music production"),
             ("image-video", "Image & Video — GIMP, Inkscape, Blender, Kdenlive, OBS"),
             ("gaming", "Gaming — Steam, Lutris, Wine, GameMode, MangoHud"),
+            ("dvd-ripping", "DVD Ripping — Handbrake, MakeMKV, FFmpeg, libdvdcss"),
+            ("emulation", "Emulation — RetroArch, Dolphin, PCSX2, DuckStation"),
         ]
     )
 
@@ -116,6 +131,7 @@ def match_template_llm(query: str) -> str | None:
         valid = {
             "ml-python", "coding", "rust-dev", "web-dev", "writing",
             "documents", "research", "audio", "image-video", "gaming",
+            "dvd-ripping", "emulation",
         }
         if content in valid:
             return content

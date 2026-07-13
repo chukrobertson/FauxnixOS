@@ -107,6 +107,15 @@ TEMPLATE_PACKAGES: dict[str, list[str]] = {
         "steam", "lutris", "wine", "winetricks",
         "gamemode", "mangohud", "protonup-qt",
     ],
+    "dvd-ripping": [
+        "handbrake", "makemkv", "libdvdcss", "ffmpeg",
+        "vlc", "mkvtoolnix", "mediainfo", "cdrtools",
+    ],
+    "emulation": [
+        "retroarch", "retroarch-assets", "dolphin-emu", "pcsx2",
+        "ppsspp", "mupen64plus", "snes9x", "mgba",
+        "duckstation", "flycast", "melonDS", "yuzu",
+    ],
     "python": ["python3", "python3.pkgs.pip", "python3.pkgs.ipython"],
     "rust": ["cargo", "rustc", "rust-analyzer"],
     "data": ["python3", "python3.pkgs.pandas", "python3.pkgs.jupyter"],
@@ -126,4 +135,6 @@ TEMPLATE_KEYWORDS: dict[str, list[str]] = {
     "audio": ["audio", "music", "sound", "podcast", "record", "mix"],
     "image-video": ["image", "photo", "video", "edit", "design", "gimp", "blender"],
     "gaming": ["game", "gaming", "steam", "play", "proton"],
+    "dvd-ripping": ["dvd", "bluray", "rip", "handbrake", "makemkv", "encode"],
+    "emulation": ["emulate", "emulator", "rom", "retro", "retroarch", "dolphin"],
 }
