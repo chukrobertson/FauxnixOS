@@ -366,7 +366,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
 
     try:
         import sys
-        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        sys.path.insert(0, os.path.expanduser(os.getenv("FAUXNIX_ROOT", "~/Projects/fauxnix-core") + "/packages/nexus"))
         from nexus.db import get_health, count_events, recent_events
         health = get_health(args.name)
         events_count = count_events(args.name)
@@ -476,7 +476,7 @@ def _search_git(query: str, results: list[dict]) -> None:
 def _search_events(query: str, results: list[dict]) -> None:
     try:
         import sys
-        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        sys.path.insert(0, os.path.expanduser(os.getenv("FAUXNIX_ROOT", "~/Projects/fauxnix-core") + "/packages/nexus"))
         from nexus.db import get_conn
         conn = get_conn()
         rows = conn.execute(
@@ -498,7 +498,7 @@ def _search_events(query: str, results: list[dict]) -> None:
 def _search_files(query: str, results: list[dict]) -> None:
     try:
         import sys
-        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/fauxnix-tools")
+        sys.path.insert(0, os.path.expanduser(os.getenv("FAUXNIX_ROOT", "~/Projects/fauxnix-core") + "/packages/fauxnix-tools"))
         from fauxnix_tools.db import get_conn
         conn = get_conn()
         rows = conn.execute(

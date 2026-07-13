@@ -77,7 +77,8 @@ def _manifest_info(thread_name: str) -> str:
 def _health_info(thread_name: str) -> str:
     try:
         import sys
-        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        fauxnix_root = os.getenv("FAUXNIX_ROOT", "/home/chxk/Projects/fauxnix-core")
+        sys.path.insert(0, f"{fauxnix_root}/packages/nexus")
         from nexus.db import get_health
         health = get_health(thread_name)
         if not health:
@@ -129,7 +130,8 @@ def _git_summary(thread_name: str) -> str:
 def _event_summary(thread_name: str) -> str:
     try:
         import sys
-        sys.path.insert(0, "/home/chxk/Projects/fauxnix-core/packages/nexus")
+        fauxnix_root = os.getenv("FAUXNIX_ROOT", "/home/chxk/Projects/fauxnix-core")
+        sys.path.insert(0, f"{fauxnix_root}/packages/nexus")
         from nexus.db import recent_events
 
         events = recent_events(thread_name, 10)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+
+FAUXNIX_ROOT = os.getenv("FAUXNIX_ROOT", "/home/chxk/Projects/fauxnix-core")
 
 
 def nspawn_boot(workspace_path: Path, shared_path: Path, machine_name: str = "workspace") -> subprocess.Popen:
@@ -14,7 +17,7 @@ def nspawn_boot(workspace_path: Path, shared_path: Path, machine_name: str = "wo
             "--bind=/nix/store",
             f"--bind={shared_path}:/shared",
             "--bind=/run/nexus",
-            "--bind=/home/chxk/Projects/fauxnix-core:/fauxnix-core",
+            f"--bind={FAUXNIX_ROOT}:/fauxnix-core",
             "--boot",
         ],
         stdout=subprocess.DEVNULL,

@@ -197,8 +197,9 @@ class SnapshotService(BaseService):
                 if not line.strip():
                     continue
                 name = line.split()[0]
+                wsctl_bin = os.path.expanduser(os.getenv("WSCTL_BIN", "~/.local/bin/wsctl"))
                 subprocess.run(
-                    ["sudo", "/home/chxk/.local/bin/wsctl", "snapshot",
+                    ["sudo", wsctl_bin, "snapshot",
                      name, "--label", "auto-hourly"],
                     capture_output=True,
                 )

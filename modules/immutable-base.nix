@@ -170,7 +170,7 @@ in
     # Runtime directories + welcome script
     system.activationScripts.fauxnixDirs = ''
       mkdir -p /run/nexus
-      chmod 777 /run/nexus
+      chmod 755 /run/nexus
       for path in ${lib.concatStringsSep " " cfg.persistentPaths}; do
         mkdir -p "$path"
       done

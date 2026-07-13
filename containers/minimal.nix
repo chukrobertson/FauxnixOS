@@ -101,7 +101,7 @@ in
     isNormalUser = true;
     uid = 1000;
     extraGroups = [ "wheel" ];
-    initialPassword = "workspace";
+    initialPassword = "fauxnix-thread";
   };
 
   services.openssh = {
