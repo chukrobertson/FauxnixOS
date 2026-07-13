@@ -4,6 +4,8 @@ let
   cfg = config.fauxnix.immutable-base;
   fauxnix-wallpaper = ../assets/wallpapers/Fauxnix_native.png;
   fennix-extension = ../modules/gnome/fennix-extension;
+  nexus-welcome-script = ../scripts/nexus-welcome.sh;
+  nexus-welcome-desktop = ../modules/gnome/nexus-welcome.desktop;
 in
 {
   options.fauxnix.immutable-base = {
@@ -128,7 +130,18 @@ in
       }
     ];
 
-    # System packages (merged)
+    # Nexus welcome dialog — first-boot assistant
+    environment.etc."xdg/autostart/nexus-welcome.desktop".text = ''
+      [Desktop Entry]
+      Type=Application
+      Name=Nexus Welcome
+      Comment=Pick up where you left off
+      Exec=/run/current-system/sw/bin/nexus-welcome
+      Terminal=false
+      NoDisplay=true
+      X-GNOME-Autostart-enabled=true
+      X-GNOME-Autostart-Delay=3
+    '';
     environment.systemPackages = with pkgs; [
       git
       btrfs-progs
@@ -136,6 +149,7 @@ in
       curl
       htop
       waypipe
+      zenity
     ] ++ lib.optionals cfg.enableDesktop [
       gnome-console
       gnome-text-editor
@@ -153,7 +167,7 @@ in
     networking.firewall.allowedTCPPorts = [ 22 ]
       ++ lib.optionals cfg.enableDesktop (lib.range 5900 5920);
 
-    # Runtime directories
+    # Runtime directories + welcome script
     system.activationScripts.fauxnixDirs = ''
       mkdir -p /run/nexus
       chmod 777 /run/nexus
@@ -162,6 +176,8 @@ in
       done
       mkdir -p /etc/nixos
       mkdir -p /var/lib/nixos
+      cp ${nexus-welcome-script} /run/current-system/sw/bin/nexus-welcome
+      chmod +x /run/current-system/sw/bin/nexus-welcome
     '';
 
     system.stateVersion = "26.05";
