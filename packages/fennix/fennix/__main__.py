@@ -37,6 +37,9 @@ def main():
 
     thread_name = os.getenv("FENNIX_THREAD_NAME", "workspace")
 
+    from fennix.resume import show_resume
+    show_resume(thread_name)
+
     if not os.getenv("DISPLAY") and not os.getenv("WAYLAND_DISPLAY"):
         _run_headless(thread_name)
         return
