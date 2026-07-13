@@ -50,6 +50,33 @@ let
     wait $LABWC_PID
   '';
 
+  vnc-start = pkgs.writeShellScriptBin "vnc-start" ''
+    VNC_PORT="''${FENNIX_VNC_PORT:-}"
+    if [ -z "$VNC_PORT" ]; then
+      echo "[vnc] no VNC port set — exiting"
+      exit 0
+    fi
+
+    WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-wayland-0}"
+    XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/tmp/runtime-chxk}"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+
+    export PATH="${pkgs.labwc}/bin:${pkgs.wayvnc}/bin:$PATH"
+
+    echo "[fauxnix] starting labwc for VNC..."
+    labwc &
+    LABWC_PID=$!
+    sleep 2
+
+    echo "[fauxnix] starting wayvnc on port $VNC_PORT..."
+    wayvnc 0.0.0.0 "$VNC_PORT" &
+    WAYVNC_PID=$!
+
+    trap 'kill $LABWC_PID $WAYVNC_PID 2>/dev/null' EXIT
+    wait $LABWC_PID
+  '';
+
   archivist-script = pkgs.writeShellScriptBin "archivist-start" ''
     export PATH="${python-env}/bin:$PATH"
     export PYTHONPATH="/fauxnix-core/packages/archivist:/fauxnix-core/packages/fauxnix-tools"
@@ -121,6 +148,18 @@ in
       Restart = "always";
       RestartSec = 5;
       PassEnvironment = "FENNIX_THREAD_NAME";
+    };
+  };
+
+  systemd.services.wayvnc = {
+    description = "Wayvnc VNC Server";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${vnc-start}/bin/vnc-start";
+      Restart = "no";
+      PassEnvironment = "FENNIX_VNC_PORT";
     };
   };
 

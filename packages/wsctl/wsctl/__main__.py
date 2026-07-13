@@ -183,12 +183,29 @@ def _cmd_setup(args: argparse.Namespace) -> None:
 
 def _cmd_attach(args: argparse.Namespace) -> None:
     import subprocess
+    from pathlib import Path
+    from wsctl import WSCI_WORKSPACE_ROOT
     from wsctl.nspawn import is_running
+    from wsctl.manifest import load_manifest
+
     if not is_running(args.name):
         print(f"Error: Thread '{args.name}' is not running", file=sys.stderr)
         print(f"  Start it first: wsctl start {args.name}", file=sys.stderr)
         sys.exit(1)
+
+    manifest = load_manifest(Path(WSCI_WORKSPACE_ROOT) / args.name)
+    profile = manifest["nix"]["profile"] if manifest else "headless"
+    vnc_port = manifest.get("network", {}).get("vnc_port") if manifest else None
+
     user = args.user or "chxk"
+
+    if profile in ("win11", "macos") and not args.command:
+        if vnc_port:
+            print(f"Graphical thread on VNC port {vnc_port}")
+            print(f"  vncviewer localhost:{vnc_port}")
+        print(f"  or: waypipe ssh {user}@{args.name}.local")
+        print(f"  or: wsctl attach {args.name} <command> for shell")
+
     cmd = ["sudo", "machinectl", "shell", f"{user}@{args.name}"]
     if args.command:
         cmd.extend(["/bin/sh", "-c", args.command])

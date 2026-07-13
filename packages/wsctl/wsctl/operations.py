@@ -85,7 +85,7 @@ def start_workspace(name: str) -> None:
     shared_path = Path(WSCI_SHARED_ROOT)
     ensure_directory(shared_path)
 
-    nspawn_boot(ws_path, shared_path, machine_name=name)
+    nspawn_boot(ws_path, shared_path, machine_name=name, vnc_port=vnc_port)
 
     timeout = 30
     start = time.time()
