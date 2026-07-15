@@ -6,10 +6,15 @@ in
 {
   options.fauxnix.fauxnixos = {
     enable = lib.mkEnableOption "FauxnixOS services — Nexus, threads, GNOME extensions, workspace infrastructure";
+    enableNexus = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable the Nexus host daemon (CPU-intensive — disable on low-power machines)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    systemd.services.nexus = {
+    systemd.services.nexus = lib.mkIf cfg.enableNexus {
       description = "Nexus Host Daemon";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "ollama.service" ];
