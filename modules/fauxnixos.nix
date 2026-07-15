@@ -60,6 +60,10 @@ in
       }
     ];
 
+    environment.systemPackages = with pkgs; [
+      zenity
+    ];
+
     environment.variables.PATH = [ "$HOME/.local/bin" ];
   };
 }
