@@ -2,6 +2,15 @@
 
 let
   cfg = config.fauxnix.fauxnixos;
+
+  fennix-extension-pkg = pkgs.stdenv.mkDerivation {
+    name = "gnome-shell-extension-fennix";
+    src = /home/chxk/Projects/fauxnix-core/modules/gnome/fennix-extension;
+    installPhase = ''
+      mkdir -p $out/share/gnome-shell/extensions/fennix@fauxnix.local
+      cp -r $src/* $out/share/gnome-shell/extensions/fennix@fauxnix.local/
+    '';
+  };
 in
 {
   options.fauxnix.fauxnixos = {
@@ -62,6 +71,7 @@ in
 
     environment.systemPackages = with pkgs; [
       zenity
+      fennix-extension-pkg
     ];
 
     environment.variables.PATH = [ "$HOME/.local/bin" ];
